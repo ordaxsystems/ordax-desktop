@@ -28,10 +28,17 @@ contornar gates.
 
 ## Gates de liberação
 
-O build e o smoke NSIS foram aprovados com a fonte Desktop separada, mas
-**cross-version upgrade e rollback NSIS** devem ser comprovados com
-instaladores anteriores em Windows descartável antes de substituir uma
-instalação de usuário ou anunciar corte Stable.
+O build e o smoke NSIS foram aprovados com fonte Desktop separada na
+[CI #41797193969](https://github.com/ordaxsystems/ordax-desktop/actions/runs/41797193969)
+(commit `dfb43db3`). A prova **cross-version** já foi aprovada na
+[CI #41786352134](https://github.com/ordaxsystems/ordax-desktop/actions/runs/41786352134):
+`OS_TO_DESKTOP_NSIS_UPGRADE=PASS` e `DESKTOP_TO_OS_NSIS_ROLLBACK=PASS`,
+com hashes dos instaladores conferidos em Windows descartável. Os 34 testes
+portáteis da fonte Desktop passaram também no `DESKTOP-4UFL03B`.
+Isso não autoriza assinatura Stable, substituição do Desktop operacional,
+nem integração da [PR OS #2403](https://github.com/ordaxsystems/ordax-os/pull/2403)
+enquanto o gate Creator continuar reprovado na
+[issue #1935](https://github.com/ordaxsystems/ordax-os/issues/1935).
 
 Histórico de importação: `docs/source-import.json`. O produtor de
 migração `owner-export` foi desativado após a importação; a evidência

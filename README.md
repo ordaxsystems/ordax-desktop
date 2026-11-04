@@ -24,9 +24,14 @@ registra ambos os SHAs.
 A antiga árvore `tools/windows-desktop/` foi retirada da
 [PR #2403](https://github.com/ordaxsystems/ordax-os/pull/2403) do OS;
 nenhum segundo pipeline ou código Electron em uso deve permanecer no OS.
-O instalador é **Dev unsigned**, não um Stable autorizado. A migração da
-instalação de um release anterior e o rollback NSIS ainda exigem validação
-em ambiente isolado antes de distribuição ou substituição do Desktop em uso.
+O instalador permanece **Dev unsigned**. A prova de instalação, upgrade e
+rollback entre versões foi aprovada em Windows descartável na
+[cross-version #41786352134](https://github.com/ordaxsystems/ordax-desktop/actions/runs/41786352134),
+com `OS_TO_DESKTOP_NSIS_UPGRADE=PASS` e `DESKTOP_TO_OS_NSIS_ROLLBACK=PASS`.
+A revisão `dfb43db3` também concluiu contratos, NSIS, smoke de instalação
+e publicação do artefato na [CI #41797193969](https://github.com/ordaxsystems/ordax-desktop/actions/runs/41797193969).
+Essas provas **não** substituem homologação física da instalação operacional,
+assinatura Stable nem o gate Creator da [PR OS #2403](https://github.com/ordaxsystems/ordax-os/pull/2403).
 
 ## Windows window layout (Electron owner)
 
