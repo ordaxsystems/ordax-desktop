@@ -102,6 +102,12 @@ test('detached Electron shell mounts pinned Surface in independent OS checkout',
     // Running again must reuse those exact junctions, never overwrite them.
     const second=spawnSync(process.execPath,['-e',script],{encoding:'utf8',env:f.environment});
     assert.equal(second.status,0,second.stderr);
+    runGit(f.surface,'commit','--allow-empty','-qm','Canonical Surface fast-forward');
+    const descendant=runGit(f.surface,'rev-parse','HEAD');
+    assert.notEqual(descendant,f.visualSha);
+    const third=spawnSync(process.execPath,['-e',script],{encoding:'utf8',env:f.environment});
+    assert.equal(third.status,0,third.stderr);
+    assert.equal(lstatSync(join(f.root,'system','surface','ui')).isSymbolicLink(),true);
   }finally{
     if(syntheticMarker){
       rmSync(electronMarker,{force:true});
@@ -115,6 +121,18 @@ test('detached Electron shell mounts pinned Surface in independent OS checkout',
     }
     f.cleanup();
   }
+});
+test('local HMR refuses unrelated Surface history despite canonical origin',()=>{
+  const f=makeDetachedFixture();
+  try {
+    runGit(f.surface,'checkout','--orphan','unrelated-visual-history');
+    runGit(f.surface,'commit','--allow-empty','-qm','Independent unrelated commit');
+    const script='const {prepare}=require('+JSON.stringify(entry)+');prepare()';
+    const r=spawnSync(process.execPath,['-e',script],{encoding:'utf8',env:f.environment});
+    assert.equal(r.status,1);
+    assert.match(r.stderr,/Surface checkout must contain pinned/);
+    assert.equal(existsSync(join(f.root,'system','surface','ui')),false);
+  } finally { f.cleanup(); }
 });
 test('detached OS checkout rejects untrusted Git origin before visual mounts',()=>{
   const f=makeDetachedFixture();

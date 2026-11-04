@@ -5,11 +5,18 @@ process.env.ORDAX_DESKTOP_LOCAL_DEV='1';
 const {existsSync,lstatSync,readFileSync,realpathSync,symlinkSync,mkdirSync}=require('node:fs');
 const {resolve,join,dirname}=require('node:path');
 const {execFileSync,spawn}=require('node:child_process');
+const {resolveInstalledGit}=require('./checkout.cjs');
 const {developmentOsRoot,resolveTemplate}=require('./runtime.cjs');
 const fail=message=>{throw Error('OrdaX local development: '+message)};
 const SHA40=/^[0-9a-f]{40}$/;
 function git(root,...args){
-  return execFileSync('git',['-C',root,...args],{encoding:'utf8',windowsHide:true}).trim();
+  // Local Git reads must neither prompt for credentials nor rely on the
+  // launcher's PATH containing the globally installed Windows Git binary.
+  return execFileSync(resolveInstalledGit(),
+    ['-c','credential.helper=','-C',root,...args],{
+      encoding:'utf8',windowsHide:true,timeout:15000,
+      env:{...process.env,GIT_TERMINAL_PROMPT:'0'},
+    }).trim();
 }
 function prepare(){
   const root=developmentOsRoot(__dirname);
@@ -35,8 +42,10 @@ function prepare(){
   if(!/^(?:https:\/\/github\.com\/|git@github\.com:|ssh:\/\/git@github\.com\/)ordaxsystems\/ordax-surface(?:\.git)?$/i.test(git(source,'remote','get-url','origin')))
     fail('Surface origin does not match the canonical repository');
   const sourceSha=git(source,'rev-parse','HEAD');
-  if(sourceSha!==lock.source_commit)
-    fail('Surface checkout must start from pinned '+lock.source_commit+'; current '+sourceSha);
+  // In local HMR only, permit a fast-forward descendant of the verified
+  // Surface lock. NSIS materialization remains pinned to the exact lock SHA.
+  try { git(source,'merge-base','--is-ancestor',lock.source_commit,sourceSha); }
+  catch { fail('Surface checkout must contain pinned '+lock.source_commit+'; current '+sourceSha); }
   if(!existsSync(join(root,'node_modules','vite','bin','vite.js')))
     fail('run npm ci at the canonical ordax-os checkout');
   if(!existsSync(join(__dirname,'node_modules','electron','path.txt')))

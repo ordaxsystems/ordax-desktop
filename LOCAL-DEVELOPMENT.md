@@ -5,8 +5,10 @@ Fonte do host: `ordaxsystems/ordax-desktop`. Dependências Native e contratos:
 Não copie `system/`, modelos, nem a Surface para o Desktop.
 
 Após clonar os três repositórios, confira que os remotos Git sejam oficiais e
-que o checkout da Surface corresponda ao
-`docs/contracts/surface-source.json` do OS selecionado.
+que o checkout da Surface pertença ao origin oficial e contenha
+como ancestral o commit do `docs/contracts/surface-source.json` do OS.
+Apenas o HMR local aceita commits posteriores por fast-forward; o
+instalador e as provas de proveniência continuam exigindo o SHA exato.
 
 ```powershell
 cd ordax-os
@@ -18,10 +20,12 @@ $env:ORDAX_SURFACE_CHECKOUT = (Resolve-Path '../ordax-surface').Path
 npm run dev:local
 ```
 
-O script `local-dev.cjs` valida cada checkout, seu origin e os commits
-antes de montar a Surface via junctions ignoradas pelo Git. Alterar a revisão
-da Surface requer atualizar o lock por meio do owner do OS, não copiar
-componentes visuais. A ausência de ferramentas, vínculos ou permissões
+O script `local-dev.cjs` valida cada checkout, seu origin e a ancestralidade
+do lock antes de montar a Surface via junctions ignoradas pelo Git. O
+desenvolvimento visual pode avançar no repositório Surface oficial sem
+alterar o lock. Para publicar um novo materializado, o owner do OS
+atualiza seu próprio lock e a CI atesta o SHA exato. Nenhuma fonte visual
+é copiada para o Desktop. A ausência de ferramentas, vínculos ou permissões
 falha fechada, sem instalar um segundo runtime.
 
 O workflow do instalador usa os dois SHAs exatos e executa os testes Native
