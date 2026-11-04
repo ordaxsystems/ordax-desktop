@@ -80,12 +80,19 @@ test('requires a verified Native bundle and exact source SHA before touching out
   } finally {f.cleanup();}
 });
 
-test('fails closed on source symlinks, even when the linked file is regular',()=>{
+test('fails closed on linked source files and Windows directory junctions',()=>{
   const f=fixture();
   try {
-    const file=join(f.root,'system','composition','native','index.html');
-    const symlink=join(f.root,'system','composition','native','shadow.html');
-    fs.symlinkSync(file,symlink);
+    const native=join(f.root,'system','composition','native');
+    const file=join(native,'index.html');
+    const symlink=join(native,'shadow.html');
+    try {
+      fs.symlinkSync(file,symlink);
+    } catch (error) {
+      if (process.platform!=='win32' || !['EPERM','EACCES'].includes(error.code)) throw error;
+      // Unprivileged Windows cannot create file symlinks; junctions still exercise linked-source rejection.
+      fs.symlinkSync(native,join(f.root,'system','composition','shadow-native'),'junction');
+    }
     assert.throws(()=>stageStandalonePackage({sourceRoot:f.root,osSha:SHA,verifyNative:()=>true}),
       /linked/);
     assert.equal(fs.existsSync(f.out),false);
