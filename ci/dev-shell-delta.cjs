@@ -326,7 +326,8 @@ async function install(loc,prepared,drivers={}){
     'Unresolved previous Desktop delta; preserve for manual recovery');
   assert(digest(fs.readFileSync(live))===prepared.receipt.old_asar_sha256,
     'Installed Desktop changed after delta preparation');
-  let backedUp=false,swapped=false;
+  let backedUp=false,swapped=false,committed=false;
+  const removeBackup=drivers.removeBackup||((file)=>fs.rmSync(file));
   try{
     // Copy and hash verification belong inside the cleanup transaction.
     fs.copyFileSync(prepared.candidate,temporary,fs.constants.COPYFILE_EXCL);
@@ -348,10 +349,18 @@ async function install(loc,prepared,drivers={}){
       release_channel:'development-unsigned-source-delta'};
     fs.writeFileSync(recFile+'.tmp',JSON.stringify(record,null,2)+'\n',{flag:'wx'});
     fs.renameSync(recFile+'.tmp',recFile);
-    fs.rmSync(backup);
+    committed=true;
+    removeBackup(backup);
     return 'INSTALLED';
   }catch(error){
+    // Once a verified health receipt is durable, backup cleanup is no longer
+    // a rollback event. The next trusted --install can finish that cleanup.
+    if(committed)throw Error(error.message+'; healthy Desktop committed; cleanup pending: '+backup);
     if(backedUp){
+      // Verify recovery bytes BEFORE touching a possibly still-usable shell.
+      assert(fs.existsSync(backup)&&
+        digest(fs.readFileSync(backup))===prepared.receipt.old_asar_sha256,
+        error.message+'; rollback backup missing or invalid; live preserved');
       // Never overwrite a shell in use; retain backup for manual recovery.
       if(list(exe).length){
         throw Error(error.message+'; Desktop still running; backup retained: '+backup);

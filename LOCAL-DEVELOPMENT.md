@@ -85,7 +85,11 @@ recibo de saúde confirmado, ou conclui a limpeza quando o recibo válido atesta
 a nova shell. A recuperação valida a identidade canônica e a integridade do
 ASAR, inclusive após futuras mudanças de versão do pacote Dev, sem aceitar
 nomes de produto distintos. Um arquivo divergente ou suspeito bloqueia a
-operação e preserva a evidência. `--verify` permanece somente leitura.
+operação e preserva a evidência. Depois que o recibo de saúde é confirmado,
+falhas na limpeza do backup **não** revertem a shell saudável; a próxima
+execução confiável com o Desktop fechado conclui essa limpeza. Se o backup
+estiver ausente ou corrompido durante uma falha de saúde, a shell atual não é
+apagada sem uma cópia íntegra verificada. `--verify` permanece somente leitura.
 
 ### Recuperação do host Native após uma falha
 

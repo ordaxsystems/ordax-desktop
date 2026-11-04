@@ -459,3 +459,53 @@ test('trusted Git source is checked once before interrupted recovery and reused'
   assert.equal(gate.recovery,'RESTORED');
   assert.equal(digest(fsTxn.readFileSync(f.loc.live)),digest(f.original));
 });
+
+test('failed backup cleanup after healthy receipt cannot roll back a committed shell',async t=>{
+  const f=isolatedTransaction();
+  t.after(()=>fsTxn.rmSync(f.root,{recursive:true,force:true}));
+  const rec=pathTxn.join(f.loc.profile,'desktop-shell-delta-receipt.json');
+  let restarted=0;
+  await assert.rejects(install(f.loc,f.prepared,{
+    list:()=>[],boot:async()=>true,
+    removeBackup:()=>{throw Error('Simulated Windows file lock')},
+    restart:()=>{restarted++},
+  }),/healthy Desktop committed; cleanup pending/);
+  assert.equal(restarted,0);
+  assert.equal(digest(fsTxn.readFileSync(f.loc.live)),
+    f.prepared.receipt.new_asar_sha256);
+  assert.equal(digest(fsTxn.readFileSync(f.backup)),digest(f.original));
+  assert.equal(JSON.parse(fsTxn.readFileSync(rec,'utf8')).installed_asar_sha256,
+    f.prepared.receipt.new_asar_sha256);
+  assert.equal(recoverInterrupted(f.loc,{list:()=>[]}), 'COMMITTED');
+  assert.equal(digest(fsTxn.readFileSync(f.loc.live)),
+    f.prepared.receipt.new_asar_sha256);
+  assert.equal(fsTxn.existsSync(f.backup),false);
+});
+test('missing rollback during unhealthy boot preserves candidate instead of deleting live',async t=>{
+  const f=isolatedTransaction();
+  t.after(()=>fsTxn.rmSync(f.root,{recursive:true,force:true}));
+  let restarted=0;
+  await assert.rejects(install(f.loc,f.prepared,{
+    list:()=>[],
+    boot:async()=>{fsTxn.rmSync(f.backup);return false},
+    restart:()=>{restarted++},
+  }),/rollback backup missing or invalid; live preserved/);
+  assert.equal(restarted,0);
+  assert.equal(digest(fsTxn.readFileSync(f.loc.live)),
+    f.prepared.receipt.new_asar_sha256);
+  assert.equal(fsTxn.existsSync(f.backup),false);
+});
+test('corrupt rollback during unhealthy boot preserves both copies for investigation',async t=>{
+  const f=isolatedTransaction();
+  t.after(()=>fsTxn.rmSync(f.root,{recursive:true,force:true}));
+  let restarted=0;
+  await assert.rejects(install(f.loc,f.prepared,{
+    list:()=>[],
+    boot:async()=>{fsTxn.appendFileSync(f.backup,'tampered');return false},
+    restart:()=>{restarted++},
+  }),/rollback backup missing or invalid; live preserved/);
+  assert.equal(restarted,0);
+  assert.equal(digest(fsTxn.readFileSync(f.loc.live)),
+    f.prepared.receipt.new_asar_sha256);
+  assert.equal(fsTxn.existsSync(f.backup),true);
+});
