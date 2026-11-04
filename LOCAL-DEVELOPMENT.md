@@ -31,3 +31,24 @@ falha fechada, sem instalar um segundo runtime.
 O workflow do instalador usa os dois SHAs exatos e executa os testes Native
 e NSIS em runner descartável Windows. Desenvolvimento local, HMR e testes
 não substituem autorização de assinatura Stable nem comprovam upgrade NSIS.
+
+## Atualização Dev da shell sem instalador NSIS
+
+O host Electron pode receber somente o delta de arquivos `*.cjs`/`*.mjs`
+do commit exato da `ordax-desktop/main`, **sem baixar o NSIS de ~679 MB**:
+
+```powershell
+node ci/dev-shell-delta.cjs --verify
+# Feche normalmente o OrdaX OS Desktop Dev antes de instalar:
+node ci/dev-shell-delta.cjs --install
+```
+
+O utilitário usa apenas Node.js e o Git existente, exige checkout limpo na
+`main` oficial, compara blobs Git, SHA-256 e integridade ASAR, e aborta com
+o Desktop aberto ou uma transação de atualização Native pendente. Troca apenas
+`resources/app.asar` da instalação Dev única e exige `Native Surface ready`
+após reiniciar; preserva o arquivo anterior para reversão em caso de falha.
+Não atualiza binário Electron, bibliotecas nativas, Surface/OS, modelos ou Stable;
+para alteração desses componentes, permanece necessário o produtor oficial.
+
+Teste direcionado: `node --test ci/dev-shell-delta.test.cjs`.
