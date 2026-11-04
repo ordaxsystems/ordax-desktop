@@ -130,7 +130,7 @@ const FILE_ROUTES=new Set([
   '/__ordax/native/file-export','/__ordax/native/image-preview',
   '/__ordax/native/media-preview','/__ordax/native/document-preview',
 ]);
-function authorizeDesktopFileRequests(browserWindow,base,fileToken,localSessionToken,nativeSessionToken,deviceProfileToken,stateToken,observationToken,localAiToken) {
+function authorizeDesktopFileRequests(browserWindow,base,fileToken,localSessionToken,nativeSessionToken,deviceProfileToken,stateToken,observationToken,localAiToken,surfaceReportToken) {
   // The Electron shell lives in app.asar, while the canonical OS runtime is
   // installed under resources/runtime-template. Never import ../../system
   // from the shell's asar location or duplicate the route owner in the shell.
@@ -148,7 +148,7 @@ function authorizeDesktopFileRequests(browserWindow,base,fileToken,localSessionT
       // Strip any renderer-supplied fake grant first, even if the route is
       // untrusted. Only the owning Electron WebContents may receive secrets.
       for(const key of Object.keys(headers)){
-        if(/^(x-ordax-file-token|x-ordax-local-session-token|x-ordax-session-token|x-ordax-device-profile-token|x-ordax-desktop-state-token|x-ordax-observation-token|x-ordax-local-ai-token)$/i.test(key))delete headers[key];
+        if(/^(x-ordax-file-token|x-ordax-local-session-token|x-ordax-session-token|x-ordax-device-profile-token|x-ordax-desktop-state-token|x-ordax-observation-token|x-ordax-local-ai-token|x-ordax-surface-report-token)$/i.test(key))delete headers[key];
       }
       try {
         const target=new URL(details.url);
@@ -164,6 +164,10 @@ function authorizeDesktopFileRequests(browserWindow,base,fileToken,localSessionT
         if(trusted && ['/__ordax/native/first-run','/__ordax/native/preferences',
                        '/__ordax/native/first-run-cursor'].includes(target.pathname))
           headers['X-OrdaX-Desktop-State-Token']=stateToken;
+        if(trusted && ['/__ordax/native/desktop-surface-state',
+                       '/__ordax/native/desktop-surface-command',
+                       '/__ordax/native/desktop-surface-receipt'].includes(target.pathname))
+          headers['X-OrdaX-Surface-Report-Token']=surfaceReportToken;
         if(trusted && OBSERVATION_ROUTES.includes(target.pathname))
           headers['X-OrdaX-Observation-Token']=observationToken;
         if(trusted && target.pathname.startsWith('/__ordax/native/local-ai/'))
@@ -605,6 +609,7 @@ app.whenReady().then(async()=>{
     const stateToken=randomBytes(32).toString('hex');
     const networkToken=randomBytes(32).toString('hex');
     const observationToken=randomBytes(32).toString('hex');
+    const surfaceReportToken=randomBytes(32).toString('hex');
     const localAiToken=randomBytes(32).toString('hex');
     const displayToken=randomBytes(32).toString('hex');
     const template=resolveTemplate(__dirname,process.resourcesPath,app.isPackaged);
@@ -628,9 +633,9 @@ app.whenReady().then(async()=>{
     let root=selected.root;
     try {
       log(root===template?'Bundled OrdaX Surface':'Verified Git-managed OrdaX Surface');
-      runtime=await startHost({root,template,stateDirectory:runtimeStateDirectory(userData),userData,log,fileToken,localSessionToken,nativeSessionToken,diagnosticToken,deviceProfileToken,stateToken,networkToken,observationToken,displayToken,localAiToken,sourceSha:sourceOf(selected),
+      runtime=await startHost({root,template,stateDirectory:runtimeStateDirectory(userData),userData,log,fileToken,localSessionToken,nativeSessionToken,diagnosticToken,deviceProfileToken,stateToken,networkToken,observationToken,surfaceReportToken,displayToken,localAiToken,sourceSha:sourceOf(selected),
          builtAssetsRoot:nativeBuiltAssetsFor(root,template)});
-      authorizeDesktopFileRequests(window,runtime.url,fileToken,localSessionToken,nativeSessionToken,deviceProfileToken,stateToken,observationToken,localAiToken);
+      authorizeDesktopFileRequests(window,runtime.url,fileToken,localSessionToken,nativeSessionToken,deviceProfileToken,stateToken,observationToken,localAiToken,surfaceReportToken);
       await window.loadURL(nativeUrl(runtime.url,sourceOf(selected)));
       await assertNativeShellMounted(window);
       await assertDesktopInternetSmoke(window,browserHost);
@@ -650,9 +655,9 @@ app.whenReady().then(async()=>{
       runtime=null;
       const fallback=await chooseBootVersion({userData,template,log});
       root=fallback.root;
-      runtime=await startHost({root,template,stateDirectory:runtimeStateDirectory(userData),userData,log,fileToken,localSessionToken,nativeSessionToken,diagnosticToken,deviceProfileToken,stateToken,networkToken,observationToken,displayToken,localAiToken,sourceSha:sourceOf(fallback),
+      runtime=await startHost({root,template,stateDirectory:runtimeStateDirectory(userData),userData,log,fileToken,localSessionToken,nativeSessionToken,diagnosticToken,deviceProfileToken,stateToken,networkToken,observationToken,surfaceReportToken,displayToken,localAiToken,sourceSha:sourceOf(fallback),
          builtAssetsRoot:nativeBuiltAssetsFor(root,template)});
-      authorizeDesktopFileRequests(window,runtime.url,fileToken,localSessionToken,nativeSessionToken,deviceProfileToken,stateToken,observationToken,localAiToken);
+      authorizeDesktopFileRequests(window,runtime.url,fileToken,localSessionToken,nativeSessionToken,deviceProfileToken,stateToken,observationToken,localAiToken,surfaceReportToken);
       await window.loadURL(nativeUrl(runtime.url,sourceOf(fallback)));
       await assertNativeShellMounted(window);
       await assertDesktopInternetSmoke(window,browserHost);

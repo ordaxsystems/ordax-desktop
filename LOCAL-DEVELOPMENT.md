@@ -107,3 +107,16 @@ normal, candidato descartado e processos antigos não acionam recuperação.
 Isto não declara prontidão MCP nem equivale a reconexão remota atestada.
 A instalação operacional não deve ser reiniciada como parte dos testes de
 código: host-recovery.test.cjs cobre o observador e seus limites.
+### Grant da Surface para o Product Native
+
+Na shell independente, cada inicialização gera um `surfaceReportToken` próprio,
+distinto dos demais grants. O Electron só adiciona
+`X-OrdaX-Surface-Report-Token` às três rotas canônicas
+`desktop-surface-state`, `desktop-surface-command` e `desktop-surface-receipt`
+quando a requisição parte do WebContents da Surface verificada; remove
+qualquer cabeçalho homônimo fornecido pelo renderer. O host repassa esse token
+apenas ao Native filho, que valida a identidade e permanece fail-closed.
+Esse grant local **não** inscreve o Device Product, não transfere os grants do
+MCP auxiliar e não estabelece `mcpReady` sem sessão e capability digest reais.
+Uma revisão Native rejeitada conserva o rollback até ser revalidada com a shell
+corrigida; não apagar evidências ou forçar sucesso.

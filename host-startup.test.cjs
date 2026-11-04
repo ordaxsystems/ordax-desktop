@@ -60,7 +60,7 @@ test('signaled Native child fails startup immediately instead of waiting for rea
   mkdirSync(target,{recursive:true});
   writeFileSync(join(target,'desktop-native-server.mjs'),
     'process.kill(process.pid, "SIGTERM");\n','utf8');
-  const tokens=['a','b','c','d','e','f','1','2','3','4'].map(x=>x.repeat(64));
+  const tokens=['a','b','c','d','e','f','1','2','3','4','5'].map(x=>x.repeat(64));
   const started=Date.now();
   await assert.rejects(startHost({
     root,template:root,stateDirectory:root,userData:root,log:()=>{},
@@ -69,7 +69,45 @@ test('signaled Native child fails startup immediately instead of waiting for rea
     nativeSessionToken:tokens[2],diagnosticToken:tokens[3],
     deviceProfileToken:tokens[4],stateToken:tokens[5],
     networkToken:tokens[6],observationToken:tokens[7],
-    displayToken:tokens[8],localAiToken:tokens[9],
+    displayToken:tokens[8],localAiToken:tokens[9],surfaceReportToken:tokens[10],
   }),/Canonical Native server exited before HTTP readiness: (SIGTERM|1|143)/);
   assert.ok(Date.now()-started<10000,'dead Native child must not burn 45-second startup deadline');
+});
+
+test('Native Surface reporter requires its own valid per-launch grant before starting a child',async()=>{
+  const tokens=['a','b','c','d','e','f','1','2','3','4','5'].map(x=>x.repeat(64));
+  const opts={root:'unused',template:'unused',stateDirectory:'unused',userData:'unused',log:()=>{},
+    fileToken:tokens[0],localSessionToken:tokens[1],nativeSessionToken:tokens[2],
+    diagnosticToken:tokens[3],deviceProfileToken:tokens[4],stateToken:tokens[5],
+    networkToken:tokens[6],observationToken:tokens[7],
+    displayToken:tokens[8],localAiToken:tokens[9],
+  };
+  await assert.rejects(startHost(opts),/independent per-launch tokens/);
+  await assert.rejects(startHost({...opts,surfaceReportToken:tokens[0]}),
+    /independent per-launch tokens/);
+  await assert.rejects(startHost({...opts,surfaceReportToken:'invalid'}),
+    /independent per-launch tokens/);
+});
+
+test('Native host child receives only its distinct per-launch Surface report grant',async t=>{
+  const root=mkdtempSync(join(tmpdir(),'ordax-native-surface-grant-'));
+  t.after(()=>rmSync(root,{recursive:true,force:true}));
+  const target=join(root,'tools','windows-emulator');
+  mkdirSync(target,{recursive:true});
+  const observation=join(root,'grant-check.json');
+  writeFileSync(join(target,'desktop-native-server.mjs'),
+    'import {writeFileSync} from "node:fs";\n'+
+    'const report=process.env.ORDAX_DESKTOP_SURFACE_REPORT_TOKEN;\n'+
+    'writeFileSync('+JSON.stringify(observation)+', JSON.stringify({valid:/^[0-9a-f]{64}$/.test(report??""),distinct:report!==process.env.ORDAX_DESKTOP_FILE_TOKEN}));\n'+
+    'process.exit(2);\n');
+  const tokens=['a','b','c','d','e','f','1','2','3','4','5'].map(x=>x.repeat(64));
+  await assert.rejects(startHost({
+    root,template:root,stateDirectory:root,userData:root,log:()=>{},builtAssetsRoot:root,
+    fileToken:tokens[0],localSessionToken:tokens[1],nativeSessionToken:tokens[2],
+    diagnosticToken:tokens[3],deviceProfileToken:tokens[4],stateToken:tokens[5],
+    networkToken:tokens[6],observationToken:tokens[7],
+    displayToken:tokens[8],localAiToken:tokens[9],surfaceReportToken:tokens[10],
+  }),/Canonical Native server exited before HTTP readiness: 2/);
+  assert.deepEqual(JSON.parse(require('node:fs').readFileSync(observation,'utf8')),
+    {valid:true,distinct:true});
 });
