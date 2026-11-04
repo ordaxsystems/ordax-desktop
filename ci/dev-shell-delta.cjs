@@ -211,8 +211,8 @@ function recoverInterrupted(loc,{list=processList}={}){
   }
   return status;
 }
-function prepare({repo,profile,live}){
-  const {revision,manifest,files}=officialSources(repo);
+function prepare({repo,profile,live},approvedSources=officialSources(repo)){
+  const {revision,manifest,files}=approvedSources;
   const previous=fs.readFileSync(live),archive=parseArchive(previous);
   const installed=JSON.parse(fileBytes(archive,'package.json').toString('utf8'));
   assert(installed.name===manifest.name&&installed.version===manifest.version,
@@ -365,16 +365,24 @@ async function install(loc,prepared,drivers={}){
     if(fs.existsSync(temporary))fs.rmSync(temporary,{force:true});
   }
 }
+function validatedRecovery(loc,{readSource=officialSources,recover=recoverInterrupted}={}){
+  // A dirty or untrusted source checkout must never repair installation bytes.
+  // Reuse the verified Git blobs for delta preparation; avoid double fetches.
+  const trusted=readSource(loc.repo);
+  return {trusted,recovery:recover(loc)};
+}
 async function cli(){
   const arg=process.argv[2];
   assert(['--verify','--install'].includes(arg),
     'Usage: node ci/dev-shell-delta.cjs --verify | --install (Dev only)');
   const loc=locations({allowMissingLive:arg==='--install'});
+  let approvedSources;
   if(arg==='--install'){
-    const recovery=recoverInterrupted(loc);
-    if(recovery!=='CLEAN')console.log('DESKTOP_SHELL_INTERRUPTED='+recovery);
+    const gate=validatedRecovery(loc);
+    approvedSources=gate.trusted;
+    if(gate.recovery!=='CLEAN')console.log('DESKTOP_SHELL_INTERRUPTED='+gate.recovery);
   }
-  const state=prepare(loc);
+  const state=prepare(loc,approvedSources);
   if(!state.changed){console.log('DESKTOP_SHELL_DELTA=CURRENT');return}
   try{
     console.log('STAGED='+state.candidate);
@@ -389,4 +397,4 @@ async function cli(){
   }
 }
 if(require.main===module)cli().catch(err=>{console.error('DESKTOP_SHELL_DELTA_BLOCKED='+err.message);process.exitCode=1});
-module.exports={parseArchive,encodeArchive,fileBytes,integrity,buildDelta,digest,decodeJson,prepare,processList,install,stopFailedBoot,childAlive,recoverInterrupted};
+module.exports={parseArchive,encodeArchive,fileBytes,integrity,buildDelta,digest,decodeJson,prepare,processList,install,stopFailedBoot,childAlive,recoverInterrupted,validatedRecovery};

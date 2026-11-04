@@ -425,3 +425,37 @@ test('interrupted recovery rejects wrong product identity and malformed version'
     assert.equal(fsTxn.existsSync(f.backup),true);
   }
 });
+
+test('untrusted Git source blocks interrupted recovery before any file change',t=>{
+  const {validatedRecovery}=require('./dev-shell-delta.cjs');
+  const f=isolatedTransaction();
+  t.after(()=>fsTxn.rmSync(f.root,{recursive:true,force:true}));
+  fsTxn.renameSync(f.loc.live,f.backup);
+  let recoveryCalled=false;
+  assert.throws(()=>validatedRecovery({...f.loc,repo:'untrusted'},{
+    readSource:()=>{throw Error('Desktop source checkout dirty')},
+    recover:()=>{recoveryCalled=true},
+  }),/source checkout dirty/);
+  assert.equal(recoveryCalled,false);
+  assert.equal(fsTxn.existsSync(f.backup),true);
+  assert.equal(fsTxn.existsSync(f.loc.live),false);
+});
+test('trusted Git source is checked once before interrupted recovery and reused',t=>{
+  const {validatedRecovery}=require('./dev-shell-delta.cjs');
+  const f=isolatedTransaction();
+  t.after(()=>fsTxn.rmSync(f.root,{recursive:true,force:true}));
+  fsTxn.renameSync(f.loc.live,f.backup);
+  const trusted={revision:'b'.repeat(40),files:{}};
+  const calls=[];
+  const gate=validatedRecovery({...f.loc,repo:'canonical-main'},{
+    readSource:repo=>{calls.push('read:'+repo);return trusted},
+    recover:loc=>{
+      calls.push('recover');
+      return recoverInterrupted(loc,{list:()=>[]});
+    },
+  });
+  assert.deepEqual(calls,['read:canonical-main','recover']);
+  assert.equal(gate.trusted,trusted);
+  assert.equal(gate.recovery,'RESTORED');
+  assert.equal(digest(fsTxn.readFileSync(f.loc.live)),digest(f.original));
+});

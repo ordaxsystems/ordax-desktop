@@ -76,8 +76,10 @@ a homologação do NSIS Stable.
 
 ### Recuperação após uma interrupção do Windows
 
-O modo `--install` verifica arquivos `.delta-rollback`, `.delta-ready` e recibos
-incompletos antes de preparar a próxima atualização. Com o Desktop fechado e
+O modo `--install` primeiro atesta a `main` oficial limpa, os blobs Git e a
+sincronia com `origin`; só depois verifica arquivos `.delta-rollback`,
+`.delta-ready` e recibos incompletos para preparar a próxima atualização.
+Com o Desktop fechado e
 sem transação Native pendente, restaura o último ASAR válido quando não existe
 recibo de saúde confirmado, ou conclui a limpeza quando o recibo válido atesta
 a nova shell. A recuperação valida a identidade canônica e a integridade do
