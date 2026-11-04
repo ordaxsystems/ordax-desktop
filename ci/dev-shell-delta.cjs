@@ -190,31 +190,45 @@ async function startAndConfirm(loc,logSize){
   }
   return false;
 }
-async function install(loc,prepared){
+async function install(loc,prepared,drivers={}){
   if(!prepared.changed)return 'CURRENT';
+  // Injectable only for offline transaction proofs; CLI always uses native guards.
+  const list=drivers.list||processList, boot=drivers.boot||startAndConfirm;
+  const restart=drivers.restart||((exe,installation)=>{
+    const child=spawn(exe,[],{cwd:installation,detached:true,stdio:'ignore'});
+    child.on('error',()=>{});child.unref();
+  });
   const {live,exe,install:installation,profile}=loc;
-  assert(!processList(exe).length,
+  const nativeIdle=()=>{
+    const state=decodeJson(fs.readFileSync(
+      path.join(profile,'desktop-dev-update-state.json'),'utf8'));
+    assert(!state.pendingSha&&!state.attemptedSha,
+      'Native OS update transaction active; cannot swap Desktop shell');
+  };
+  assert(!list(exe).length,
     'Desktop is running. Close the window normally before applying a shell delta');
-  const updateState=decodeJson(fs.readFileSync(path.join(profile,'desktop-dev-update-state.json'),'utf8'));
-  assert(!updateState.pendingSha&&!updateState.attemptedSha,
-    'Native OS update transaction active; cannot swap Desktop shell');
+  nativeIdle();
   const backup=path.join(installation,'resources','app.asar.delta-rollback');
   const temporary=path.join(installation,'resources','app.asar.delta-ready');
-  assert(!fs.existsSync(backup)&&!fs.existsSync(temporary),
+  const recFile=path.join(profile,'desktop-shell-delta-receipt.json');
+  assert(!fs.existsSync(backup)&&!fs.existsSync(temporary)&&
+    !fs.existsSync(recFile+'.tmp'),
     'Unresolved previous Desktop delta; preserve for manual recovery');
   assert(digest(fs.readFileSync(live))===prepared.receipt.old_asar_sha256,
     'Installed Desktop changed after delta preparation');
-  fs.copyFileSync(prepared.candidate,temporary,fs.constants.COPYFILE_EXCL);
-  assert(digest(fs.readFileSync(temporary))===prepared.receipt.new_asar_sha256,
-    'Copied Desktop delta verification failed');
-  let swapped=false;
+  let backedUp=false,swapped=false;
   try{
-    fs.renameSync(live,backup);
-    fs.renameSync(temporary,live);
-    swapped=true;
+    // Copy and hash verification belong inside the cleanup transaction.
+    fs.copyFileSync(prepared.candidate,temporary,fs.constants.COPYFILE_EXCL);
+    assert(digest(fs.readFileSync(temporary))===prepared.receipt.new_asar_sha256,
+      'Copied Desktop delta verification failed');
+    assert(!list(exe).length,'Desktop reopened before shell swap');
+    nativeIdle();
+    fs.renameSync(live,backup);backedUp=true;
+    fs.renameSync(temporary,live);swapped=true;
     const log=path.join(profile,'desktop.log');
     const offset=fs.existsSync(log)?fs.statSync(log).size:0;
-    assert(await startAndConfirm(loc,offset),'Native Surface did not become healthy after shell update');
+    assert(await boot(loc,offset),'Native Surface did not become healthy after shell update');
     assert(digest(fs.readFileSync(live))===prepared.receipt.new_asar_sha256,
       'Desktop changed during startup');
     const record={schema:'ordax.desktop-shell-delta-installed/1',
@@ -222,21 +236,19 @@ async function install(loc,prepared){
       installed_asar_sha256:prepared.receipt.new_asar_sha256,
       applied_utc:new Date().toISOString(),boot_smoke:'Native Surface ready',
       release_channel:'development-unsigned-source-delta'};
-    const recFile=path.join(profile,'desktop-shell-delta-receipt.json');
     fs.writeFileSync(recFile+'.tmp',JSON.stringify(record,null,2)+'\n',{flag:'wx'});
     fs.renameSync(recFile+'.tmp',recFile);
     fs.rmSync(backup);
     return 'INSTALLED';
   }catch(error){
-    if(swapped){
-      if(processList(exe).length){
-        throw Error(error.message+'; running Desktop must close before rollback; backup retained: '+backup);
+    if(backedUp){
+      // Never overwrite a shell in use; retain backup for manual recovery.
+      if(list(exe).length){
+        throw Error(error.message+'; Desktop still running; backup retained: '+backup);
       }
-      fs.rmSync(live,{force:true});
+      if(swapped)fs.rmSync(live,{force:true});
       fs.renameSync(backup,live);
-      spawn(exe,[],{cwd:installation,detached:true,stdio:'ignore'}).unref();
-    }else if(fs.existsSync(backup)&&!fs.existsSync(live)){
-      fs.renameSync(backup,live);
+      restart(exe,installation);
     }
     throw error;
   }finally{
@@ -263,4 +275,4 @@ async function cli(){
   }
 }
 if(require.main===module)cli().catch(err=>{console.error('DESKTOP_SHELL_DELTA_BLOCKED='+err.message);process.exitCode=1});
-module.exports={parseArchive,encodeArchive,fileBytes,integrity,buildDelta,digest,decodeJson,prepare,processList};
+module.exports={parseArchive,encodeArchive,fileBytes,integrity,buildDelta,digest,decodeJson,prepare,processList,install};

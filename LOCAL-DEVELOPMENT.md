@@ -52,3 +52,19 @@ Não atualiza binário Electron, bibliotecas nativas, Surface/OS, modelos ou Sta
 para alteração desses componentes, permanece necessário o produtor oficial.
 
 Teste direcionado: `node --test ci/dev-shell-delta.test.cjs`.
+
+### Prova de troca e recuperação em uma cópia isolada
+
+O teste de transação usa a mesma função de instalação do modo Dev, mas
+substitui apenas o sinalizador de saúde por um resultado controlado e mantém
+os arquivos em um diretório temporário. Não abre outra instância do Desktop:
+
+```powershell
+$env:ORDAX_DESKTOP_ISOLATED_ASAR = Join-Path $env:LOCALAPPDATA 'Programs\OrdaX OS Desktop Dev\resources\app.asar'
+node --test --test-name-pattern='physical Windows ASAR' ci/dev-shell-delta.test.cjs
+Remove-Item Env:\ORDAX_DESKTOP_ISOLATED_ASAR
+```
+
+Essa prova cobre substituição, hash, recibo, falha e rollback com os **bytes
+reais do ASAR**, sem modificar a instalação operacional. **Não** substitui o
+smoke com inicialização real de uma nova revisão ou homologação do NSIS Stable.

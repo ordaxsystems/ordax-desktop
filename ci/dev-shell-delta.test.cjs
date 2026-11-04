@@ -85,3 +85,163 @@ test('Windows PowerShell UTF-8 BOM receipts parse without weakening JSON validat
   assert.deepEqual(decodeJson('\uFEFF{"schema":"test"}'),{schema:'test'});
   assert.throws(()=>decodeJson('\uFEFF{broken'),SyntaxError);
 });
+
+const fsTxn=require('node:fs');
+const osTxn=require('node:os');
+const pathTxn=require('node:path');
+const {install}=require('./dev-shell-delta.cjs');
+
+function isolatedTransaction(original=fixture()){
+  const root=fsTxn.mkdtempSync(pathTxn.join(osTxn.tmpdir(),'ordax-shell-swap-proof-'));
+  const installation=pathTxn.join(root,'installation');
+  const resources=pathTxn.join(installation,'resources');
+  const profile=pathTxn.join(root,'profile');
+  fsTxn.mkdirSync(resources,{recursive:true});
+  fsTxn.mkdirSync(profile,{recursive:true});
+  const live=pathTxn.join(resources,'app.asar');
+  const exe=pathTxn.join(installation,'OrdaX OS Desktop Dev.exe');
+  fsTxn.writeFileSync(live,original);
+  fsTxn.writeFileSync(exe,'isolated fixture (never executed)');
+  fsTxn.writeFileSync(pathTxn.join(profile,'desktop-dev-update-state.json'),
+    JSON.stringify({pendingSha:null,attemptedSha:null}));
+  const oldSource=fileBytes(parseArchive(original),'main.cjs');
+  const changed=Buffer.concat([oldSource,Buffer.from('// isolated development shell proof\n')]);
+  const candidateBytes=buildDelta(original,{'main.cjs':changed});
+  const candidate=pathTxn.join(root,'candidate.asar');
+  fsTxn.writeFileSync(candidate,candidateBytes.archive);
+  const prepared={changed:true,candidate,receipt:{
+    source_commit:'f'.repeat(40),old_asar_sha256:digest(original),
+    new_asar_sha256:digest(candidateBytes.archive)}};
+  return {root,loc:{live,profile,exe,install:installation},prepared,original,changed,
+    backup:pathTxn.join(resources,'app.asar.delta-rollback'),
+    temporary:pathTxn.join(resources,'app.asar.delta-ready')};
+}
+const injectedHealthy={
+  list:()=>[],
+  boot:async()=>true,
+  restart:()=>{throw Error('Old launch must not occur for healthy update')},
+};
+test('isolated disk transaction swaps actual ASAR bytes and records one receipt',async t=>{
+  const f=isolatedTransaction();
+  t.after(()=>fsTxn.rmSync(f.root,{recursive:true,force:true}));
+  assert.equal(await install(f.loc,f.prepared,injectedHealthy),'INSTALLED');
+  const updated=fsTxn.readFileSync(f.loc.live);
+  assert.equal(digest(updated),f.prepared.receipt.new_asar_sha256);
+  assert.ok(fileBytes(parseArchive(updated),'main.cjs').equals(f.changed));
+  const receipt=JSON.parse(fsTxn.readFileSync(
+    pathTxn.join(f.loc.profile,'desktop-shell-delta-receipt.json'),'utf8'));
+  assert.equal(receipt.boot_smoke,'Native Surface ready');
+  assert.equal(receipt.installed_asar_sha256,digest(updated));
+  assert.equal(fsTxn.existsSync(f.backup),false);
+  assert.equal(fsTxn.existsSync(f.temporary),false);
+});
+test('failed health proof atomically restores previous ASAR and restarts old shell',async t=>{
+  const f=isolatedTransaction();
+  t.after(()=>fsTxn.rmSync(f.root,{recursive:true,force:true}));
+  let restarts=0;
+  await assert.rejects(install(f.loc,f.prepared,{
+    list:()=>[],boot:async()=>false,restart:()=>{restarts++},
+  }),/Native Surface did not become healthy/);
+  assert.equal(restarts,1);
+  assert.equal(digest(fsTxn.readFileSync(f.loc.live)),digest(f.original));
+  assert.equal(fsTxn.existsSync(f.backup),false);
+  assert.equal(fsTxn.existsSync(f.temporary),false);
+});
+test('corrupt staged candidate fails before swap and cleans temporary file',async t=>{
+  const f=isolatedTransaction();
+  t.after(()=>fsTxn.rmSync(f.root,{recursive:true,force:true}));
+  fsTxn.appendFileSync(f.prepared.candidate,'tampered');
+  await assert.rejects(install(f.loc,f.prepared,injectedHealthy),
+    /Copied Desktop delta verification failed/);
+  assert.equal(digest(fsTxn.readFileSync(f.loc.live)),digest(f.original));
+  assert.equal(fsTxn.existsSync(f.backup),false);
+  assert.equal(fsTxn.existsSync(f.temporary),false);
+});
+test('running Desktop and pending Native transaction block before swap',async t=>{
+  const f=isolatedTransaction();
+  t.after(()=>fsTxn.rmSync(f.root,{recursive:true,force:true}));
+  await assert.rejects(install(f.loc,f.prepared,{list:()=>[100]}),/Desktop is running/);
+  fsTxn.writeFileSync(pathTxn.join(f.loc.profile,'desktop-dev-update-state.json'),
+    JSON.stringify({pendingSha:'a'.repeat(40),attemptedSha:null}));
+  await assert.rejects(install(f.loc,f.prepared,injectedHealthy),/Native OS update transaction active/);
+  assert.equal(digest(fsTxn.readFileSync(f.loc.live)),digest(f.original));
+  assert.equal(fsTxn.existsSync(f.temporary),false);
+});
+test('Desktop reopening between initial checks and swap aborts without leaving a candidate',async t=>{
+  const f=isolatedTransaction();
+  t.after(()=>fsTxn.rmSync(f.root,{recursive:true,force:true}));
+  let calls=0;
+  await assert.rejects(install(f.loc,f.prepared,{
+    list:()=>++calls===1?[]:[101],
+  }),/Desktop reopened before shell swap/);
+  assert.equal(digest(fsTxn.readFileSync(f.loc.live)),digest(f.original));
+  assert.equal(fsTxn.existsSync(f.temporary),false);
+  assert.equal(fsTxn.existsSync(f.backup),false);
+});
+test('unresolved receipt transaction blocks without overwriting previous evidence',async t=>{
+  const f=isolatedTransaction();
+  t.after(()=>fsTxn.rmSync(f.root,{recursive:true,force:true}));
+  const rec=pathTxn.join(f.loc.profile,'desktop-shell-delta-receipt.json.tmp');
+  fsTxn.writeFileSync(rec,'previous incomplete evidence');
+  await assert.rejects(install(f.loc,f.prepared,injectedHealthy),
+    /Unresolved previous Desktop delta/);
+  assert.equal(fsTxn.readFileSync(rec,'utf8'),'previous incomplete evidence');
+  assert.equal(digest(fsTxn.readFileSync(f.loc.live)),digest(f.original));
+});
+
+test('physical Windows ASAR undergoes an isolated real-byte swap and rollback',
+  {skip:!process.env.ORDAX_DESKTOP_ISOLATED_ASAR},
+  async t=>{
+    const installed=fsTxn.readFileSync(process.env.ORDAX_DESKTOP_ISOLATED_ASAR);
+    const prior=parseArchive(installed);
+    assert.ok(fileBytes(prior,'main.cjs').length>5000,
+      'Expected genuine installed Electron shell source');
+    const f=isolatedTransaction(installed);
+    t.after(()=>fsTxn.rmSync(f.root,{recursive:true,force:true}));
+    const replaced=await install(f.loc,f.prepared,injectedHealthy);
+    assert.equal(replaced,'INSTALLED');
+    assert.equal(digest(fsTxn.readFileSync(f.loc.live)),
+      f.prepared.receipt.new_asar_sha256);
+    // Check the same transaction's restore path using the installed app.asar.
+    fsTxn.writeFileSync(f.loc.live,installed);
+    fsTxn.rmSync(pathTxn.join(f.loc.profile,'desktop-shell-delta-receipt.json'));
+    let restarted=0;
+    await assert.rejects(install(f.loc,f.prepared,{
+      list:()=>[],boot:async()=>false,restart:()=>{restarted++},
+    }),/Native Surface did not become healthy/);
+    assert.equal(restarted,1);
+    assert.equal(digest(fsTxn.readFileSync(f.loc.live)),digest(installed));
+    assert.equal(fsTxn.existsSync(f.backup),false);
+    assert.equal(fsTxn.existsSync(f.temporary),false);
+  });
+
+test('Native update beginning during copying prevents any ASAR swap',async t=>{
+  const f=isolatedTransaction();
+  t.after(()=>fsTxn.rmSync(f.root,{recursive:true,force:true}));
+  let probes=0;
+  await assert.rejects(install(f.loc,f.prepared,{
+    list:()=>{
+      if(++probes===2)fsTxn.writeFileSync(
+        pathTxn.join(f.loc.profile,'desktop-dev-update-state.json'),
+        JSON.stringify({pendingSha:'e'.repeat(40),attemptedSha:null}));
+      return [];
+    },
+  }),/Native OS update transaction active/);
+  assert.equal(digest(fsTxn.readFileSync(f.loc.live)),digest(f.original));
+  assert.equal(fsTxn.existsSync(f.temporary),false);
+  assert.equal(fsTxn.existsSync(f.backup),false);
+});
+test('unhealthy shell still running retains rollback rather than corrupting live bytes',async t=>{
+  const f=isolatedTransaction();
+  t.after(()=>fsTxn.rmSync(f.root,{recursive:true,force:true}));
+  let probes=0;
+  await assert.rejects(install(f.loc,f.prepared,{
+    list:()=>++probes>2?[123]:[],
+    boot:async()=>false,
+    restart:()=>{throw Error('Cannot restart while unknown shell still running')},
+  }),/backup retained/);
+  assert.equal(digest(fsTxn.readFileSync(f.loc.live)),
+    f.prepared.receipt.new_asar_sha256);
+  assert.equal(digest(fsTxn.readFileSync(f.backup)),digest(f.original));
+  assert.equal(fsTxn.existsSync(f.temporary),false);
+});
