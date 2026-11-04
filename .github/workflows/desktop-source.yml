@@ -5,7 +5,10 @@ on:
     # Documentation and compatibility-only test changes cannot alter NSIS bytes.
     paths-ignore: &nonproduct_files
       - '**/*.md'
-      - 'ci/**'
+      # Cross-version proof is tested by its own workflow.
+      # The Dev shell delta below must be checked by this source gate.
+      - 'ci/download-cross-version-artifacts.cjs'
+      - 'ci/windows-cross-version-smoke.ps1'
       - '.github/workflows/desktop-cross-version-proof.yml'
   pull_request:
     paths-ignore: *nonproduct_files
@@ -37,7 +40,8 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           # Always build on manual dispatch, unknown history, or changed product bytes.
-          # Only suites run by npm test below can skip NSIS; other tests need the full job.
+          # Only verified test and Dev-only delta files can skip NSIS;
+          # all packaged product changes still require the installer job.
           $required = $true
           if ($env:EVENT_NAME -in @('pull_request', 'push') -and
               $env:BASE_SHA -cmatch '^[a-f0-9]{40}$' -and
@@ -45,7 +49,10 @@ jobs:
               $env:HEAD_SHA -cmatch '^[a-f0-9]{40}$') {
             $changed = @(& git diff --name-only --no-renames $env:BASE_SHA $env:HEAD_SHA)
             if ($LASTEXITCODE -eq 0 -and $changed.Count -gt 0) {
-              $nonTest = @($changed | Where-Object { $_ -cnotmatch '^(standalone-stage|local-dev|window-layout)\.test\.cjs$' })
+              $nonTest = @($changed | Where-Object {
+                $_ -cnotmatch '^(standalone-stage|local-dev|window-layout)\.test\.cjs$' -and
+                $_ -cnotmatch '^ci/dev-shell-delta(?:\.test)?\.cjs$'
+              })
               # Changes confined to the source gate cannot change installer bytes.
               # Compare the exact reusable installer job against the base commit;
               # any change there (or unreadable base) still requires NSIS.
@@ -109,6 +116,8 @@ jobs:
           }
           & npm test
           if ($LASTEXITCODE -ne 0) { throw 'Detached Windows source regression failed' }
+          & node --test ci/dev-shell-delta.test.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'Desktop Dev shell delta regression failed' }
   # One compiler and one NSIS gate for product-affecting changes only.
   # Test-only changes still pass source contracts but do not rebuild identical
   # Electron/Native bytes. Unknown impact and manual dispatch fail closed.
