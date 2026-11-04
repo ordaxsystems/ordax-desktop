@@ -168,3 +168,10 @@ test('packaged Electron obtains OS observation grants from the verified runtime-
   assert.match(source,/require\(join\(template,'system','adapters'/);
   assert.doesNotMatch(source,/require\(['"]\.\.\/\.\.\/system\/adapters\/desktop\/observation-grant\.cjs/);
 });
+
+
+test('installed NSIS smoke invokes the one Desktop-owned Vite update test', () => {
+  const smoke = readFileSync(join(__dirname,'install-smoke.ps1'),'utf8');
+  assert.ok(smoke.includes('out/ordax-desktop-source/dev-update-real-build.test.cjs'));
+  assert.ok(!smoke.includes('tools/windows-desktop/'));
+});
