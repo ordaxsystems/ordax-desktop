@@ -46,6 +46,21 @@ jobs:
             $changed = @(& git diff --name-only --no-renames $env:BASE_SHA $env:HEAD_SHA)
             if ($LASTEXITCODE -eq 0 -and $changed.Count -gt 0) {
               $nonTest = @($changed | Where-Object { $_ -cnotmatch '^(standalone-stage|local-dev|window-layout)\.test\.cjs$' })
+              # Changes confined to the source gate cannot change installer bytes.
+              # Compare the exact reusable installer job against the base commit;
+              # any change there (or unreadable base) still requires NSIS.
+              if ($nonTest.Count -eq 1 -and $nonTest[0] -ceq '.github/workflows/desktop-source.yml') {
+                $baseline = @(& git show "${env:BASE_SHA}:.github/workflows/desktop-source.yml" 2>$null)
+                if ($LASTEXITCODE -eq 0 -and $baseline.Count -gt 0) {
+                  $block = '(?ms)^  windows-installer:\s*\r?\n.*\z'
+                  $oldJob = [regex]::Match(($baseline -join "`n"), $block)
+                  $newJob = [regex]::Match((Get-Content .github/workflows/desktop-source.yml -Raw), $block)
+                  if ($oldJob.Success -and $newJob.Success -and
+                      $oldJob.Value.Replace("`r`n", "`n").TrimEnd() -ceq $newJob.Value.Replace("`r`n", "`n").TrimEnd()) {
+                    $nonTest = @()
+                  }
+                }
+              }
               $required = $nonTest.Count -gt 0
             }
           }
