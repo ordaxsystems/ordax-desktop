@@ -49,7 +49,10 @@ jobs:
               $env:HEAD_SHA -cmatch '^[a-f0-9]{40}$') {
             $changed = @(& git diff --name-only --no-renames $env:BASE_SHA $env:HEAD_SHA)
             if ($LASTEXITCODE -eq 0 -and $changed.Count -gt 0) {
+              # Markdown is excluded from the explicit build.files allowlist in package.json;
+              # a documentation update alongside Dev-only code must not trigger NSIS.
               $nonTest = @($changed | Where-Object {
+                $_ -cnotmatch '\.md$' -and
                 $_ -cnotmatch '^(standalone-stage|local-dev|window-layout)\.test\.cjs$' -and
                 $_ -cnotmatch '^ci/dev-shell-delta(?:\.test)?\.cjs$'
               })
