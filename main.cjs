@@ -1,6 +1,6 @@
 'use strict';
-// Installable Windows host: the UI and Git Pull remain owned by OrdaX OS.
-const { app, BrowserWindow, WebContentsView, ipcMain, session, Menu, shell, dialog, powerMonitor } = require('electron');
+// Windows Electron host owned by ordax-desktop. Native OS and Surface retain their own repositories.
+const { app, BrowserWindow, WebContentsView, ipcMain, session, Menu, shell, dialog, powerMonitor, screen } = require('electron');
 const { createDesktopBrowserHost } = require('./browser-host.cjs');
 const { join, resolve, isAbsolute, basename } = require('node:path');
 const { randomBytes } = require('node:crypto');
@@ -8,6 +8,9 @@ const { mkdirSync, createWriteStream, existsSync, readFileSync } = require('node
 const { resolveTemplate, runtimeStateDirectory } = require('./runtime.cjs');
 const { chooseBootVersion, confirmHealthy, rejectCandidate, stageMain, desktopFirstRunComplete, createDesktopIdleActivation, createDesktopWindowIdleTracker, readState, pinPrevious, unpin } = require('./dev-update.cjs');
 const { startHost, stopHost } = require('./host.cjs');
+const { readDesktopWindowLayout,desktopMinimumWindowSize,
+  reconcileDesktopWindowDisplayChange,
+  createDesktopWindowLayoutPersistence } = require('./window-layout.cjs');
 const { verifyBundledNativeReceipt } = require('./native-build.cjs');
 let window=null, runtime=null, stream=null, browserHost=null, updateTimer=null, activationTimer=null, staging=false, idleActivation=null;
 const PRODUCT='/system/composition/native/index.html';
@@ -460,13 +463,67 @@ app.whenReady().then(async()=>{
   const userData=app.getPath('userData');
   mkdirSync(userData,{recursive:true});
   stream=createWriteStream(join(userData,'desktop.log'),{flags:'a'});
+  // Restore the same OS-owned window across restarts. The current screen
+  // work areas clamp saved positions after resolution or monitor changes.
+  const primary=screen.getPrimaryDisplay();
+  const availableScreens=[primary,...screen.getAllDisplays().filter(
+    display=>display.id!==primary.id)];
+  const savedWindow=readDesktopWindowLayout(userData,
+    availableScreens.map(display=>display.workArea));
   window=new BrowserWindow({
-    width:1350,height:820,minWidth:800,minHeight:570,
+    ...savedWindow.bounds,...desktopMinimumWindowSize(savedWindow.bounds),
     title:'OrdaX OS Desktop Dev',backgroundColor:'#101820',
     webPreferences:{nodeIntegration:false,contextIsolation:true,
       preload:join(__dirname,'browser-preload.cjs'),
       sandbox:true,webSecurity:true,allowRunningInsecureContent:false},
   });
+  const geometry=createDesktopWindowLayoutPersistence({
+    userData,
+    getNormalBounds:()=>window.getNormalBounds(),
+    isMaximized:()=>window.isMaximized(),
+  });
+  for(const event of ['move','resize','maximize','unmaximize'])
+    window.on(event,geometry.schedule);
+  // Respond to monitor unplug, RDP resize, DPI/work-area changes while
+  // the Desktop remains open. This belongs to the Electron window shell,
+  // not to the Surface layout or the Product Runtime.
+  let displayChangeTimer=null;
+  const onDisplayChange=()=>{
+    if(displayChangeTimer!==null)clearTimeout(displayChangeTimer);
+    displayChangeTimer=setTimeout(()=>{
+      displayChangeTimer=null;
+      if(!window||window.isDestroyed()||window.isFullScreen()||
+         window.isMaximized())return;
+      try{
+        const primary=screen.getPrimaryDisplay();
+        const areas=[primary,...screen.getAllDisplays().filter(
+          display=>display.id!==primary.id)].map(display=>display.workArea);
+        const target=reconcileDesktopWindowDisplayChange(areas,
+          window.getNormalBounds());
+        if(!target)return;
+        const minimum=desktopMinimumWindowSize(target);
+        window.setMinimumSize(minimum.minWidth,minimum.minHeight);
+        window.setBounds(target,false);
+        geometry.schedule();
+        log('Desktop window repositioned inside available display');
+      }catch{
+        // During remote display handoff, topology may briefly be unavailable.
+        // Keep the existing window; the next topology event retries.
+        log('Desktop window topology temporarily unavailable');
+      }
+    },300);
+    displayChangeTimer.unref?.();
+  };
+  const displayEvents=['display-added','display-removed','display-metrics-changed'];
+  for(const event of displayEvents)screen.on(event,onDisplayChange);
+  window.once('closed',()=>{
+    if(displayChangeTimer!==null)clearTimeout(displayChangeTimer);
+    for(const event of displayEvents)screen.removeListener(event,onDisplayChange);
+  });
+  window.on('close',()=>{
+    if(!geometry.close())log('Desktop window geometry not saved');
+  });
+  if(savedWindow.maximized)window.maximize();
   const windowIdle=createDesktopWindowIdleTracker();
   // One source of truth for whether OrdaX itself has been unattended.
   // A remote session or activity in other Windows apps must not keep a

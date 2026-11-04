@@ -27,3 +27,11 @@ nenhum segundo pipeline ou código Electron em uso deve permanecer no OS.
 O instalador é **Dev unsigned**, não um Stable autorizado. A migração da
 instalação de um release anterior e o rollback NSIS ainda exigem validação
 em ambiente isolado antes de distribuição ou substituição do Desktop em uso.
+
+## Windows window layout (Electron owner)
+
+The Desktop persists normal bounds and maximized state in the existing user
+profile and restores them within the available display work areas. Hot-unplug,
+RDP and display-metric changes recover windows that would otherwise be offscreen.
+This functionality lives in `window-layout.cjs`, not in OS Native or Surface.
+Run `node --test window-layout.test.cjs` for its focused regression tests.
