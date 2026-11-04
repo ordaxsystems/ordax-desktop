@@ -28,6 +28,14 @@ Desenvolvimento visual: instale o Electron com `npm ci` e defina
 `ORDAX_DESKTOP_OS_CHECKOUT` e `ORDAX_SURFACE_CHECKOUT` para
 checkouts reais; veja [LOCAL-DEVELOPMENT.md](LOCAL-DEVELOPMENT.md).
 
-A CI de build/release independente e a validação de atualização de uma
-versão instalada anterior ainda são gates obrigatórios antes de retirar
-o código original do OS. Nenhum código Native/Surface será copiado aqui.
+A CI Windows usa um **único** produtor NSIS: o workflow reutilizável
+`windows-desktop-dev.yml` do `ordax-os`, pinado em
+`babb9b69db0f63a9aebb34db44c94ff00d372874`. O repositório privado
+Desktop fornece o commit da shell com token somente leitura; o OS continua
+produzindo Native e Surface. O manifesto instalado deve vincular os dois SHAs
+e identificar Desktop como proprietário da shell e OS como proprietário do
+runtime. Não há segundo compilador ou artefato de release em paralelo.
+
+A validação de upgrade/rollback a partir de uma **versão anterior já instalada**
+ainda é um gate obrigatório antes de remover a shell antiga do OS. Nenhum
+código Native/Surface será copiado aqui.
