@@ -20,12 +20,38 @@ jobs:
     name: Windows Electron and upstream ownership contracts
     runs-on: windows-2022
     timeout-minutes: 15
+    outputs:
+      installer_required: ${{ steps.impact.outputs.required }}
     steps:
       - name: Checkout Desktop source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
           fetch-depth: 0
+      - name: Classify test-only impact before NSIS
+        id: impact
+        shell: pwsh
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before || '' }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          # Always build on manual dispatch, unknown history, or changed product bytes.
+          # Only suites run by npm test below can skip NSIS; other tests need the full job.
+          $required = $true
+          if ($env:EVENT_NAME -in @('pull_request', 'push') -and
+              $env:BASE_SHA -cmatch '^[a-f0-9]{40}$' -and
+              $env:BASE_SHA -cne ('0' * 40) -and
+              $env:HEAD_SHA -cmatch '^[a-f0-9]{40}$') {
+            $changed = @(& git diff --name-only --no-renames $env:BASE_SHA $env:HEAD_SHA)
+            if ($LASTEXITCODE -eq 0 -and $changed.Count -gt 0) {
+              $nonTest = @($changed | Where-Object { $_ -cnotmatch '^(standalone-stage|local-dev|window-layout)\.test\.cjs$' })
+              $required = $nonTest.Count -gt 0
+            }
+          }
+          "required=$($required.ToString().ToLowerInvariant())" |
+            Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          Write-Output "DESKTOP_NSIS_REQUIRED=$($required.ToString().ToUpperInvariant())"
       - name: Read source pin
         id: origin
         shell: pwsh
@@ -68,12 +94,13 @@ jobs:
           }
           & npm test
           if ($LASTEXITCODE -ne 0) { throw 'Detached Windows source regression failed' }
-  # One compiler and one NSIS gate. The Native product workflow remains
-  # upstream OS-owned; this private Desktop caller supplies the exact Electron
-  # commit using the caller-scoped read-only GITHUB_TOKEN.
+  # One compiler and one NSIS gate for product-affecting changes only.
+  # Test-only changes still pass source contracts but do not rebuild identical
+  # Electron/Native bytes. Unknown impact and manual dispatch fail closed.
   windows-installer:
     name: Canonical Windows installer (detached Desktop + OS)
     needs: windows-source
+    if: needs.windows-source.outputs.installer_required == 'true'
     uses: ordaxsystems/ordax-os/.github/workflows/windows-desktop-dev.yml@3e7c907b11199c5a7e55f54df57268836f0c3eb5
     with:
       os_sha: 3e7c907b11199c5a7e55f54df57268836f0c3eb5
