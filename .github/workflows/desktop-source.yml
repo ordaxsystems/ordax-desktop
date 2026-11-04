@@ -1,0 +1,64 @@
+name: Desktop Source Contracts
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: desktop-source-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  windows-source:
+    name: Windows Electron and upstream ownership contracts
+    runs-on: windows-2022
+    timeout-minutes: 15
+    steps:
+      - name: Checkout Desktop source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Read source pin
+        id: origin
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $r = Get-Content docs/source-import.json -Raw | ConvertFrom-Json
+          if ($r.source_repository -cne 'ordaxsystems/ordax-os' -or
+              $r.source_commit -cnotmatch '^[a-f0-9]{40}$') {
+            throw 'Invalid canonical OS import receipt'
+          }
+          "os_sha=$($r.source_commit)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+      - name: Checkout upstream OS contracts by exact SHA
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: ordaxsystems/ordax-os
+          ref: ${{ steps.origin.outputs.os_sha }}
+          path: .deps/ordax-os
+          sparse-checkout: |
+            docs/contracts
+          persist-credentials: false
+      - name: Node.js 24
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+      - name: Prove import and canonical OS/Surface boundaries
+        shell: pwsh
+        env:
+          ORDAX_DESKTOP_OS_CHECKOUT: ${{ github.workspace }}\.deps\ordax-os
+        run: |
+          node tools/verify-import.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'Desktop import or OS owner boundary failed' }
+      - name: Verify isolated Windows Electron source syntax and tests
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          foreach ($source in @(Get-ChildItem -Path . -File -Recurse -Include *.cjs,*.mjs |
+              Where-Object { $_.FullName -notmatch '[\\/]\.deps[\\/]' })) {
+            & node --check $source.FullName
+            if ($LASTEXITCODE -ne 0) { throw "Desktop JS parse failed: $($source.Name)" }
+          }
+          & npm test
+          if ($LASTEXITCODE -ne 0) { throw 'Detached Windows source regression failed' }

@@ -1,0 +1,11 @@
+{
+  "schema": "ordax.desktop-source-import/1",
+  "target_repository": "ordaxsystems/ordax-desktop",
+  "source_repository": "ordaxsystems/ordax-os",
+  "source_commit": "526b0e46f3146ac45340c493abf91a9c01fcb31e",
+  "source_prefix": "tools/windows-desktop",
+  "source_tree_sha": "36a343005fa33b5865afe4aee7a564bb23936dab",
+  "imported_commit": "a849bbc56280ebf89603570575d5263c1a3e5b75",
+  "files": 41,
+  "status": "source-imported-release-cutover-pending"
+}

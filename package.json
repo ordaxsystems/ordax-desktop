@@ -7,8 +7,9 @@
   "scripts": {
     "start": "electron .",
     "dev:local": "node local-dev.cjs",
-    "test": "node --test *.test.cjs",
-    "dist:win": "electron-builder --win nsis --x64"
+    "test": "node --test owner-export.test.cjs standalone-stage.test.cjs local-dev.test.cjs",
+    "dist:win": "electron-builder --win nsis --x64",
+    "test:portable": "node --test owner-export.test.cjs standalone-stage.test.cjs local-dev.test.cjs"
   },
   "devDependencies": {
     "electron": "^40.0.0",
