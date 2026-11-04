@@ -80,5 +80,7 @@ O modo `--install` verifica arquivos `.delta-rollback`, `.delta-ready` e recibos
 incompletos antes de preparar a próxima atualização. Com o Desktop fechado e
 sem transação Native pendente, restaura o último ASAR válido quando não existe
 recibo de saúde confirmado, ou conclui a limpeza quando o recibo válido atesta
-a nova shell. Um arquivo divergente ou suspeito bloqueia a operação e preserva
-a evidência. `--verify` permanece estritamente somente leitura.
+a nova shell. A recuperação valida a identidade canônica e a integridade do
+ASAR, inclusive após futuras mudanças de versão do pacote Dev, sem aceitar
+nomes de produto distintos. Um arquivo divergente ou suspeito bloqueia a
+operação e preserva a evidência. `--verify` permanece somente leitura.

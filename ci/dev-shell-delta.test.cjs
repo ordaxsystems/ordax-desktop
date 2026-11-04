@@ -392,3 +392,36 @@ test('installed Windows ASAR is restored after interrupted candidate swap in iso
   assert.equal(digest(fsTxn.readFileSync(f.loc.live)),digest(original));
   assert.equal(fsTxn.existsSync(f.backup),false);
 });
+
+function versionedShellFixture(name,version){
+  const code=Buffer.from('console.log("unmodified trusted shell")\n');
+  const manifest=Buffer.from(JSON.stringify({name,version})+'\n');
+  return encodeArchive({files:{
+    'main.cjs':{size:code.length,offset:'0',integrity:integrity(code)},
+    'package.json':{size:manifest.length,offset:String(code.length),
+      integrity:integrity(manifest)},
+  }},Buffer.concat([code,manifest]));
+}
+test('interrupted recovery accepts future canonical Dev package versions',t=>{
+  for(const version of ['0.1.0-alpha.21','0.2.0-alpha.1','1.0.0']){
+    const f=isolatedTransaction(versionedShellFixture('ordax-os-desktop-dev',version));
+    t.after(()=>fsTxn.rmSync(f.root,{recursive:true,force:true}));
+    fsTxn.renameSync(f.loc.live,f.backup);
+    fsTxn.copyFileSync(f.prepared.candidate,f.loc.live);
+    assert.equal(recoverInterrupted(f.loc,{list:()=>[]}), 'RESTORED',version);
+    assert.equal(digest(fsTxn.readFileSync(f.loc.live)),digest(f.original),version);
+  }
+});
+test('interrupted recovery rejects wrong product identity and malformed version',t=>{
+  for(const [name,version] of [
+    ['another-desktop','0.1.0-alpha.21'],
+    ['ordax-os-desktop-dev','bad version'],
+  ]){
+    const f=isolatedTransaction(versionedShellFixture(name,version));
+    t.after(()=>fsTxn.rmSync(f.root,{recursive:true,force:true}));
+    fsTxn.renameSync(f.loc.live,f.backup);
+    assert.throws(()=>recoverInterrupted(f.loc,{list:()=>[]}),
+      /Interrupted shell package identity mismatch/);
+    assert.equal(fsTxn.existsSync(f.backup),true);
+  }
+});

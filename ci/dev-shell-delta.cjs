@@ -144,7 +144,11 @@ function inspectShellArchive(file){
   const bytes=fs.readFileSync(file);
   const archive=parseArchive(bytes);
   const pkg=decodeJson(fileBytes(archive,'package.json').toString('utf8'));
-  assert(pkg.name==='ordax-os-desktop-dev'&&pkg.version==='0.1.0-alpha.20',
+  // Recovery may span a legitimate future Dev package version. Check the
+  // canonical product identity and a well-formed version, not today's alpha.
+  assert(pkg.name==='ordax-os-desktop-dev'&&
+    typeof pkg.version==='string'&&
+    /^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z][0-9A-Za-z.-]*)?$/.test(pkg.version),
     'Interrupted shell package identity mismatch');
   fileBytes(archive,'main.cjs');
   return digest(bytes);
