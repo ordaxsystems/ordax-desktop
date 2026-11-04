@@ -14,7 +14,7 @@
 A CI `.github/workflows/desktop-source.yml` valida este repositório e chama
 o workflow reutilizável do OS
 `ordax-os/.github/workflows/windows-desktop-dev.yml`, no commit
-`3281a72760687f270174b23df23a7d1f9e189ce9`. A chamada fornece `os_sha` e `desktop_sha` exatos.
+`3e7c907b11199c5a7e55f54df57268836f0c3eb5`. A chamada fornece `os_sha` e `desktop_sha` exatos.
 
 O produtor verifica ambos os checkouts Git, compara os bytes do Electron aos
 objetos Git, monta os recursos Native a partir do OS, reatesta os recibos

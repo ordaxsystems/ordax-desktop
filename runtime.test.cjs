@@ -177,3 +177,33 @@ test('installed NSIS smoke invokes the one Desktop-owned Vite update test', () =
   // Historical OS-owned installers remain readable during an upgrade.
   assert.ok(smoke.includes('tools/windows-desktop/package.json'));
 });
+
+test('Native readiness client validates a fresh HMAC challenge without an OS test fixture', async t => {
+  const { createServer } = require('node:http');
+  const { createHmac } = require('node:crypto');
+  const { isReady } = require('./host.cjs');
+  const token = 'c'.repeat(64);
+  const server = createServer((req,res) => {
+    const challenge=req.headers['x-ordax-desktop-ready-challenge'];
+    if(req.url !== '/__ordax/desktop-host-ready' || !/^[0-9a-f]{64}$/.test(challenge || '')) {
+      res.writeHead(404); res.end(); return;
+    }
+    const proof=createHmac('sha256',Buffer.from(token,'hex'))
+      .update('ordax.desktop.native-ready/1:'+challenge).digest('hex');
+    res.writeHead(200,{'cache-control':'no-store','x-ordax-desktop-ready-proof':proof});
+    res.end();
+  });
+  await new Promise(resolve => server.listen(0,'127.0.0.1',resolve));
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  const port=server.address().port;
+  assert.equal(await isReady(port,token),true);
+  assert.equal(await isReady(port,'9'.repeat(64)),false);
+  assert.equal(await isReady(port,'malformed'),false);
+});
+
+test('Electron host selects compiled Native only when the verified listener exists', () => {
+  const source = readFileSync(join(__dirname,'host.cjs'),'utf8');
+  assert.match(source,/const staticHost=Boolean\(builtAssetsRoot && existsSync\(installedNative\)\)/);
+  assert.match(source,/const entry=staticHost\?installedNative:/);
+  assert.match(source,/http-ready after/);
+});

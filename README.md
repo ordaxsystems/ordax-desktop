@@ -17,7 +17,7 @@ histórica; não autoriza uma segunda implementação.
 
 A CI privada `Desktop Source Contracts` valida a fonte e chama um **único**
 produtor Windows do `ordax-os`, pinado por commit exato
-`3281a72760687f270174b23df23a7d1f9e189ce9`. O OS continua autoridade dos recursos Native e do lock da Surface;
+`3e7c907b11199c5a7e55f54df57268836f0c3eb5`. O OS continua autoridade dos recursos Native e do lock da Surface;
 o Electron é obtido exclusivamente deste repositório. A proveniência instalada
 registra ambos os SHAs.
 
