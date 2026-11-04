@@ -158,6 +158,37 @@ async function startHost({root,template=root,stateDirectory,userData,log,builtAs
         (staticHost?'installed-host':'vite-fallback')+' stage: '+
         (runtimeReadyAt===null?'not reached':'ready')+')');
 }
+// Detect a Native host that dies after successful boot. Only the current host
+// can request recovery; deliberate shutdown, rollback and stale children cannot.
+function watchHostAfterReady(child,{isCurrent,isStopping,onUnexpectedExit}={}) {
+  if(!child || typeof child.once!=='function' ||
+     typeof child.off!=='function' || typeof isCurrent!=='function' ||
+     typeof isStopping!=='function' || typeof onUnexpectedExit!=='function')
+    throw TypeError('Native host exit watcher requires a supervised child and guards');
+  let active=true,delivered=false;
+  const onExit=(code,signal)=>{
+    if(!active || delivered || isStopping() || !isCurrent(child))return;
+    delivered=true;
+    onUnexpectedExit(Object.freeze({
+      code:Number.isInteger(code)?code:null,
+      signal:typeof signal==='string'?signal:null,
+    }));
+  };
+  child.once('exit',onExit);
+  // A process can exit between readiness and watcher registration.
+  if(hasHostExited(child))queueMicrotask(()=>onExit(child.exitCode,child.signalCode));
+  return ()=>{
+    active=false;
+    child.off('exit',onExit);
+  };
+}
+// A Product Runtime may be an orphan if its Native parent crashed.
+// Never auto-launch another Product Runtime until its owner can attest the
+// previous process is gone. Unenrolled Desktop Dev can recover once.
+function canAutoRelaunchHost({packaged,alreadyRetried,productIdentityPresent}={}) {
+  return packaged===true && alreadyRetried===false &&
+    productIdentityPresent===false;
+}
 function stopHost(child) {
   // Never taskkill a PID after it has exited: Windows can reuse that PID.
   if(!child?.pid || hasHostExited(child)) return;
@@ -168,4 +199,4 @@ function stopHost(child) {
     kill.on('error',()=>{});
   } else child.kill('SIGTERM');
 }
-module.exports={startHost,stopHost,freePort,isReady};
+module.exports={startHost,stopHost,freePort,isReady,watchHostAfterReady,canAutoRelaunchHost};
