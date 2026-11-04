@@ -173,5 +173,7 @@ test('packaged Electron obtains OS observation grants from the verified runtime-
 test('installed NSIS smoke invokes the one Desktop-owned Vite update test', () => {
   const smoke = readFileSync(join(__dirname,'install-smoke.ps1'),'utf8');
   assert.ok(smoke.includes('out/ordax-desktop-source/dev-update-real-build.test.cjs'));
-  assert.ok(!smoke.includes('tools/windows-desktop/'));
+  assert.doesNotMatch(smoke, /& node --test ["']tools\/windows-desktop\//);
+  // Historical OS-owned installers remain readable during an upgrade.
+  assert.ok(smoke.includes('tools/windows-desktop/package.json'));
 });
