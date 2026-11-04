@@ -334,7 +334,13 @@ try {
     # The legacy Vite fallback is only for previously installed OS snapshots.
     if ($newLog -notmatch 'Installed Native http-ready after [0-9]+s' -or
         $newLog -match 'Vite fallback http-ready') {
-      throw "Installed Desktop launched Vite instead of verified Native HTTP"
+      # Print ONLY the host-mode transitions, not the complete profile log.
+      # Never relax the non-Vite boot gate or leak launch capabilities.
+      $hostLines = @(($newLog -split "`n") | Where-Object {
+        $_ -match 'Bundled OrdaX Surface|Verified Git-managed OrdaX Surface|Installed Native|Vite fallback|Native Surface ready|Native shell mounted'
+      } | Select-Object -Last 15)
+      throw ("Installed Desktop launched Vite instead of verified Native HTTP; " +
+        "host-mode diagnostics: " + ($hostLines -join ' | '))
     }
     Write-Output "DESKTOP_INSTALLED_NATIVE_NO_VITE=PASS"
     Write-Output "DESKTOP_AURA_INSTALLED_REAL_INFERENCE=PASS"

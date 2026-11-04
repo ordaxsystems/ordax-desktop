@@ -36,3 +36,7 @@ instalação de usuário ou anunciar corte Stable.
 Histórico de importação: `docs/source-import.json`. O produtor de
 migração `owner-export` foi desativado após a importação; a evidência
 permanece no histórico Git, sem código de extração paralelo.
+
+## Prova de atualização entre instaladores
+
+O workflow manual `.github/workflows/desktop-cross-version-proof.yml` é **somente de validação**. Ele baixa os artefatos NSIS já compilados dos runs históricos do OS e do novo Desktop, exige ambos SHAs Git e os SHA-256 dos executáveis, e testa em runner Windows descartável: instalação do OS antigo → upgrade para Desktop → rollback. Não existe outro produtor, não há rebuild, nem execução no desktop pessoal. O teste falha fechado se não puder ler o artefato histórico ou verificar sua proveniência; não troca certificados nem publica Stable.

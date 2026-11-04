@@ -1,0 +1,76 @@
+name: Desktop NSIS Cross-Version Compatibility Proof
+on:
+  workflow_dispatch:
+    inputs:
+      baseline_artifact_id:
+        description: Exact successful OS-owned legacy NSIS Actions artifact ID
+        required: true
+        type: string
+      candidate_artifact_id:
+        description: Exact successful Desktop-owned NSIS Actions artifact ID
+        required: true
+        type: string
+      baseline_source_sha:
+        description: Exact Git SHA of the old OS installer run
+        required: true
+        type: string
+      candidate_source_sha:
+        description: Exact Git SHA of the Desktop installer run
+        required: true
+        type: string
+      baseline_exe_sha256:
+        description: SHA256 of historical OS-owned NSIS executable
+        required: true
+        type: string
+      candidate_exe_sha256:
+        description: SHA256 of Desktop-owned NSIS executable
+        required: true
+        type: string
+      expected_os_sha:
+        description: Exact Native source SHA bundled in the new installer
+        required: true
+        type: string
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: desktop-cross-version-proof
+  cancel-in-progress: false
+jobs:
+  upgrade-rollback:
+    name: Prove OS-owned to Desktop-owned NSIS upgrade and rollback
+    runs-on: windows-2022
+    timeout-minutes: 25
+    steps:
+      - name: Checkout read-only Desktop compatibility tests
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Node.js 24
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+      - name: Parse-check isolated artifact verifier
+        run: node --check ci/download-cross-version-artifacts.cjs
+      - name: Acquire and hash-verify both existing GitHub Actions NSIS archives
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASELINE_ARTIFACT_ID: ${{ inputs.baseline_artifact_id }}
+          CANDIDATE_ARTIFACT_ID: ${{ inputs.candidate_artifact_id }}
+          BASELINE_SOURCE_SHA: ${{ inputs.baseline_source_sha }}
+          CANDIDATE_SOURCE_SHA: ${{ inputs.candidate_source_sha }}
+          BASELINE_EXE_SHA256: ${{ inputs.baseline_exe_sha256 }}
+          CANDIDATE_EXE_SHA256: ${{ inputs.candidate_exe_sha256 }}
+        run: |
+          node ci/download-cross-version-artifacts.cjs
+          if ($LASTEXITCODE -ne 0) { throw 'Pinned Windows installers unavailable' }
+      - name: Prove upgrade, exact Desktop/OS provenance, then legacy rollback
+        shell: pwsh
+        env:
+          EXPECTED_OS_SHA: ${{ inputs.expected_os_sha }}
+          EXPECTED_DESKTOP_SHA: ${{ inputs.candidate_source_sha }}
+          BASELINE_OS_SHA: ${{ inputs.baseline_source_sha }}
+        run: |
+          pwsh -NoProfile -File ci/windows-cross-version-smoke.ps1 -ExpectedOsSha $env:EXPECTED_OS_SHA -ExpectedDesktopSha $env:EXPECTED_DESKTOP_SHA -ExpectedBaselineOsSha $env:BASELINE_OS_SHA
+          if ($LASTEXITCODE -ne 0) { throw 'Cross-version Windows installer compatibility failed' }
