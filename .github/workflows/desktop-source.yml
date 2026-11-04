@@ -37,7 +37,7 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           # Always build on manual dispatch, unknown history, or changed product bytes.
-          # Only .test.js/.test.cjs/.test.mjs can skip NSIS; tests still run below.
+          # Only suites run by npm test below can skip NSIS; other tests need the full job.
           $required = $true
           if ($env:EVENT_NAME -in @('pull_request', 'push') -and
               $env:BASE_SHA -cmatch '^[a-f0-9]{40}$' -and
@@ -45,7 +45,7 @@ jobs:
               $env:HEAD_SHA -cmatch '^[a-f0-9]{40}$') {
             $changed = @(& git diff --name-only --no-renames $env:BASE_SHA $env:HEAD_SHA)
             if ($LASTEXITCODE -eq 0 -and $changed.Count -gt 0) {
-              $nonTest = @($changed | Where-Object { $_ -cnotmatch '\.test\.(cjs|mjs|js)$' })
+              $nonTest = @($changed | Where-Object { $_ -cnotmatch '^(standalone-stage|local-dev|window-layout)\.test\.cjs$' })
               $required = $nonTest.Count -gt 0
             }
           }
