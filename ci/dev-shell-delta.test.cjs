@@ -2,7 +2,7 @@
 const test=require('node:test');
 const assert=require('node:assert/strict');
 const {
-  parseArchive,encodeArchive,fileBytes,integrity,buildDelta,digest,
+  parseArchive,encodeArchive,fileBytes,integrity,buildDelta,digest,decodeJson,
 }=require('./dev-shell-delta.cjs');
 function fixture(){
   const first=Buffer.from('console.log("old")\n');
@@ -79,4 +79,9 @@ test('verified ASAR integrity cannot be forged with unchanged metadata',()=>{
   old.header.files['main.cjs'].integrity.hash='f'.repeat(64);
   const fake=encodeArchive(old.header,old.payload);
   assert.throws(()=>fileBytes(parseArchive(fake),'main.cjs'),/integrity failed/);
+});
+
+test('Windows PowerShell UTF-8 BOM receipts parse without weakening JSON validation',()=>{
+  assert.deepEqual(decodeJson('\uFEFF{"schema":"test"}'),{schema:'test'});
+  assert.throws(()=>decodeJson('\uFEFF{broken'),SyntaxError);
 });

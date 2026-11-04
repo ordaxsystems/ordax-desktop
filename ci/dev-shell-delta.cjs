@@ -13,6 +13,7 @@ const SHA=/^[0-9a-f]{40}$/;
 const MAX_HEADER=12*1024*1024,MAX_BLOB=2*1024*1024,MAX_ARCHIVE=250*1024*1024;
 const BLOCK=4*1024*1024;
 const digest=b=>createHash('sha256').update(b).digest('hex');
+const decodeJson=text=>JSON.parse(String(text).replace(/^\uFEFF/,''));
 const assert=(cond,message)=>{if(!cond)throw Error(message)};
 function parseArchive(bytes){
   assert(Buffer.isBuffer(bytes)&&bytes.length>=16&&bytes.length<=MAX_ARCHIVE,'Untrusted ASAR size');
@@ -141,7 +142,7 @@ function prepare({repo,profile,live}){
     'Installed Desktop identity differs from source');
   const previousReceipt=path.join(profile,'desktop-shell-delta-receipt.json');
   if(fs.existsSync(previousReceipt)){
-    const rec=JSON.parse(fs.readFileSync(previousReceipt,'utf8'));
+    const rec=decodeJson(fs.readFileSync(previousReceipt,'utf8'));
     assert(rec.installed_asar_sha256===digest(previous),
       'Installed ASAR does not match previous developer delta receipt');
   }
@@ -194,7 +195,7 @@ async function install(loc,prepared){
   const {live,exe,install:installation,profile}=loc;
   assert(!processList(exe).length,
     'Desktop is running. Close the window normally before applying a shell delta');
-  const updateState=JSON.parse(fs.readFileSync(path.join(profile,'desktop-dev-update-state.json'),'utf8'));
+  const updateState=decodeJson(fs.readFileSync(path.join(profile,'desktop-dev-update-state.json'),'utf8'));
   assert(!updateState.pendingSha&&!updateState.attemptedSha,
     'Native OS update transaction active; cannot swap Desktop shell');
   const backup=path.join(installation,'resources','app.asar.delta-rollback');
@@ -262,4 +263,4 @@ async function cli(){
   }
 }
 if(require.main===module)cli().catch(err=>{console.error('DESKTOP_SHELL_DELTA_BLOCKED='+err.message);process.exitCode=1});
-module.exports={parseArchive,encodeArchive,fileBytes,integrity,buildDelta,digest,prepare,processList};
+module.exports={parseArchive,encodeArchive,fileBytes,integrity,buildDelta,digest,decodeJson,prepare,processList};
