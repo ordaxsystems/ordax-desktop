@@ -7,12 +7,14 @@ const { randomBytes } = require('node:crypto');
 const { mkdirSync, createWriteStream, existsSync, readFileSync } = require('node:fs');
 const { resolveTemplate, runtimeStateDirectory } = require('./runtime.cjs');
 const { chooseBootVersion, confirmHealthy, rejectCandidate, stageMain, desktopFirstRunComplete, createDesktopIdleActivation, createDesktopWindowIdleTracker, readState, pinPrevious, unpin } = require('./dev-update.cjs');
-const { startHost, stopHost } = require('./host.cjs');
+const { startHost, stopHost, watchHostAfterReady, canAutoRelaunchHost } = require('./host.cjs');
 const { readDesktopWindowLayout,desktopMinimumWindowSize,
   reconcileDesktopWindowDisplayChange,
   createDesktopWindowLayoutPersistence } = require('./window-layout.cjs');
 const { verifyBundledNativeReceipt } = require('./native-build.cjs');
 let window=null, runtime=null, stream=null, browserHost=null, updateTimer=null, activationTimer=null, staging=false, idleActivation=null;
+let quitting=false,disarmNativeHostExit=null;
+const HOST_RECOVERY_ARG='--ordax-native-host-recovery-once';
 const PRODUCT='/system/composition/native/index.html';
 // Explicit stable per-user storage must be set before the instance lock or any
 // Electron internal service can resolve a path from the npm package name.
@@ -450,7 +452,48 @@ async function stageInBackground(userData,template) {
   }catch(error){log('Desktop Dev update check blocked: '+error.message);}
   finally{staging=false;void idleActivation?.();}
 }
+// The Electron process owns this Native host. If it dies after readiness,
+// relaunch Electron ONCE so every Native token, HTTP route, Surface binding and
+// app bridge is reconstructed through the canonical boot path. A repeat crash
+// shows a truthful error instead of a restart storm or a false MCP-ready state.
+function monitorNativeHost(child) {
+  disarmNativeHostExit?.();
+  disarmNativeHostExit=watchHostAfterReady(child,{
+    isCurrent:current=>runtime?.child===current,
+    isStopping:()=>quitting,
+    onUnexpectedExit:({code,signal})=>{
+      log('Native host exited unexpectedly after readiness: '+
+        String(signal??code??'unknown'));
+      // The OS-owned Product supervisor has no cross-process orphan proof.
+      // If the Device identity directory exists, fail closed rather than
+      // relaunching a second Product agent after its parent crashed.
+      const productIdentityPresent=existsSync(join(
+        app.getPath('userData'),'native-state','product-runtime'));
+      if(canAutoRelaunchHost({
+        packaged:app.isPackaged,
+        alreadyRetried:process.argv.includes(HOST_RECOVERY_ARG),
+        productIdentityPresent,
+      })) {
+        try {
+          log('Rebuilding Native host through one bounded Electron relaunch');
+          app.relaunch({args:[...process.argv.slice(1),HOST_RECOVERY_ARG]});
+          app.quit();
+          return;
+        }catch(error){
+          log('Native host relaunch unavailable: '+error.message);
+        }
+      }
+      log('Native host auto-recovery blocked: '+
+        (productIdentityPresent?'Product Runtime may remain alive':
+          'retry exhausted or un-packaged host')+'; fail closed');
+      status('O serviço Native encerrou. Reinicie o OrdaX Desktop para tentar novamente.');
+    },
+  });
+}
 app.on('before-quit',()=>{
+  quitting=true;
+  disarmNativeHostExit?.();
+  disarmNativeHostExit=null;
   if(updateTimer){clearInterval(updateTimer);updateTimer=null;}
   if(activationTimer){clearInterval(activationTimer);activationTimer=null;}
   browserHost?.dispose();browserHost=null;
@@ -619,6 +662,7 @@ app.whenReady().then(async()=>{
       log('Native Surface ready after rollback: '+runtime.url);
     }
     navigationPolicy(runtime.url);
+    monitorNativeHost(runtime.child);
     if(app.isPackaged) {
       idleActivation=createDesktopIdleActivation({
         userData,template,log,

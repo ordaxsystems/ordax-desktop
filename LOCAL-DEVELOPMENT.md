@@ -86,3 +86,20 @@ a nova shell. A recuperação valida a identidade canônica e a integridade do
 ASAR, inclusive após futuras mudanças de versão do pacote Dev, sem aceitar
 nomes de produto distintos. Um arquivo divergente ou suspeito bloqueia a
 operação e preserva a evidência. `--verify` permanece somente leitura.
+
+### Recuperação do host Native após uma falha
+
+O Electron monitora a saída inesperada **do processo Native já homologado**.
+Se o pacote instalado não tiver identidade Product Runtime inscrita, faz no
+máximo **uma reinicialização completa do Electron**, preservando o caminho
+canônico de boot, os tokens efêmeros e o verificador de saúde existente.
+Se o host falhar novamente, mostra erro real em vez de entrar num loop.
+
+Com uma identidade Product Runtime presente, a reinicialização automática
+é bloqueada: após uma falha do processo-pai, o agente Windows filho pode
+continuar ativo. O Desktop não inicia outro agente sem a autoridade do
+Supervisor Native para comprovar a terminação do anterior. Desligamento
+normal, candidato descartado e processos antigos não acionam recuperação.
+Isto não declara prontidão MCP nem equivale a reconexão remota atestada.
+A instalação operacional não deve ser reiniciada como parte dos testes de
+código: host-recovery.test.cjs cobre o observador e seus limites.
