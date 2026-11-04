@@ -1,41 +1,29 @@
 # OrdaX Desktop — Windows
 
-Repositório proprietário do host **Electron**, janelas, instalador Windows,
-integração com Native e atualização de desenvolvimento. Não possui kernel,
-serviços do OS, interface Surface, modelos de IA, grants ou Runtime MCP.
+**Fonte canônica única do host Electron Windows**: janelas, integração Native,
+empacotamento NSIS e atualização de desenvolvimento. A interface Surface, o
+kernel, os serviços Native, a identidade, o MCP e os modelos pertencem aos
+respectivos repositórios do ecossistema OrdaX.
 
-A fonte inicial foi importada **sem alterações de bytes** de
-`ordaxsystems/ordax-os` na revisão `526b0e46`. O recibo em
-[docs/source-import.json](docs/source-import.json) identifica o commit, a
-subárvore original e o commit inicial `a849bbc5` deste repositório.
+A importação foi auditada byte a byte contra `ordax-os` commit `526b0e46`.
+[docs/source-import.json](docs/source-import.json) preserva a proveniência
+histórica; não autoriza uma segunda implementação.
 
-**Status:** importado e com CI própria de contratos; o corte de instalação
-ainda não ocorreu. Até a homologação cross-repo/upgrade físico, a PR
-[ordax-os #2403](https://github.com/ordaxsystems/ordax-os/pull/2403)
-mantém o empacotamento Dev existente. Não publicar nem mudar o appId/canal.
+## Build e testes
 
-## Testes sem dependências externas
+- Desenvolvimento: [LOCAL-DEVELOPMENT.md](LOCAL-DEVELOPMENT.md).
+- Build, origem e segurança: [BUILD-AND-PROVENANCE.md](BUILD-AND-PROVENANCE.md).
+- Testes portáveis: `npm test` (sem compilar kernel, Buildroot ou instalador).
 
-```bash
-node --test owner-export.test.cjs standalone-stage.test.cjs local-dev.test.cjs
-```
+A CI privada `Desktop Source Contracts` valida a fonte e chama um **único**
+produtor Windows do `ordax-os`, pinado por commit exato
+`3281a72760687f270174b23df23a7d1f9e189ce9`. O OS continua autoridade dos recursos Native e do lock da Surface;
+o Electron é obtido exclusivamente deste repositório. A proveniência instalada
+registra ambos os SHAs.
 
-A CI Windows confirma que a fonte importada é idêntica à árvore Git original,
-valida o contrato existente do OS e o lock da Surface, e testa a Shell em
-checkouts descartáveis. Não recompila o runtime nem cria outro instalador.
-
-Desenvolvimento visual: instale o Electron com `npm ci` e defina
-`ORDAX_DESKTOP_OS_CHECKOUT` e `ORDAX_SURFACE_CHECKOUT` para
-checkouts reais; veja [LOCAL-DEVELOPMENT.md](LOCAL-DEVELOPMENT.md).
-
-A CI Windows usa um **único** produtor NSIS: o workflow reutilizável
-`windows-desktop-dev.yml` do `ordax-os`, pinado em
-`73c73cddf7f7bf30b84de6c00575a6aa24d86f0d`. O repositório privado
-Desktop fornece o commit da shell com token somente leitura; o OS continua
-produzindo Native e Surface. O manifesto instalado deve vincular os dois SHAs
-e identificar Desktop como proprietário da shell e OS como proprietário do
-runtime. Não há segundo compilador ou artefato de release em paralelo.
-
-A validação de upgrade/rollback a partir de uma **versão anterior já instalada**
-ainda é um gate obrigatório antes de remover a shell antiga do OS. Nenhum
-código Native/Surface será copiado aqui.
+A antiga árvore `tools/windows-desktop/` foi retirada da
+[PR #2403](https://github.com/ordaxsystems/ordax-os/pull/2403) do OS;
+nenhum segundo pipeline ou código Electron em uso deve permanecer no OS.
+O instalador é **Dev unsigned**, não um Stable autorizado. A migração da
+instalação de um release anterior e o rollback NSIS ainda exigem validação
+em ambiente isolado antes de distribuição ou substituição do Desktop em uso.
