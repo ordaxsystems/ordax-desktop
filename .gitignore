@@ -1,0 +1,10 @@
+# The Desktop repository owns only the Windows Electron host.
+node_modules/
+out/
+dist/
+release/
+.cache/
+*.log
+*.tsbuildinfo
+.DS_Store
+Thumbs.db
