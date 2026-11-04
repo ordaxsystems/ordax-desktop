@@ -2,7 +2,13 @@ name: Desktop Source Contracts
 on:
   push:
     branches: [main]
+    # Documentation and compatibility-only test changes cannot alter NSIS bytes.
+    paths-ignore: &nonproduct_files
+      - '**/*.md'
+      - 'ci/**'
+      - '.github/workflows/desktop-cross-version-proof.yml'
   pull_request:
+    paths-ignore: *nonproduct_files
   workflow_dispatch:
 permissions:
   contents: read

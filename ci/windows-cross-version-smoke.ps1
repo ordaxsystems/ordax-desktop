@@ -74,20 +74,30 @@ function Install-NSIS([string]$file,[string]$phase) {
     }
   }
 }
+# The installer may correctly replace its entire program directory. The
+# durable user profile is explicitly outside it: verify THAT state survives.
+$profile = Join-Path $env:APPDATA 'OrdaX OS Desktop Dev'
+$marker = Join-Path $profile 'ci-cross-version-userdata-probe.txt'
+$createdProfile = $false
 try {
+  if (Test-Path -LiteralPath $profile) {
+    throw 'Cross-version test runner already has Desktop userData; refusing overwrite'
+  }
+  New-Item -ItemType Directory -Path $profile | Out-Null
+  $createdProfile = $true
+  Set-Content -LiteralPath $marker -Value 'preserve-userdata' -Encoding ascii
   Install-NSIS $baseline 'baseline'
   $baselineHash = Assert-Installed 'ordaxsystems/ordax-os' $ExpectedBaselineOsSha ''
-  # Test that in-place NSIS upgrade does not erase an unmanaged local file.
-  # Real userData is stored outside the install directory and is never read.
-  $marker = Join-Path $dest 'ordax-upgrade-owned-marker.txt'
-  Set-Content -LiteralPath $marker -Value 'preserve-installed-state' -Encoding ascii
+  if ((Get-Content -LiteralPath $marker -Raw).Trim() -cne 'preserve-userdata') {
+    throw 'Legacy NSIS installation changed canonical AppData'
+  }
   Install-NSIS $candidate 'upgrade'
   $candidateHash = Assert-Installed 'ordaxsystems/ordax-desktop' $ExpectedOsSha $ExpectedDesktopSha
   if ($baselineHash -ceq $candidateHash) {
     throw 'Cross-version NSIS upgrade kept the legacy Electron app.asar'
   }
-  if ((Get-Content -LiteralPath $marker -Raw).Trim() -cne 'preserve-installed-state') {
-    throw 'NSIS upgrade deleted a pre-existing local marker'
+  if ((Get-Content -LiteralPath $marker -Raw).Trim() -cne 'preserve-userdata') {
+    throw 'NSIS upgrade changed canonical AppData'
   }
   Write-Output 'OS_TO_DESKTOP_NSIS_UPGRADE=PASS'
   Install-NSIS $baseline 'rollback'
@@ -95,8 +105,8 @@ try {
   if ($rollbackHash -cne $baselineHash) {
     throw 'In-place rollback did not restore the exact baseline Electron bytes'
   }
-  if ((Get-Content -LiteralPath $marker -Raw).Trim() -cne 'preserve-installed-state') {
-    throw 'NSIS rollback deleted the local marker'
+  if ((Get-Content -LiteralPath $marker -Raw).Trim() -cne 'preserve-userdata') {
+    throw 'NSIS rollback changed canonical AppData'
   }
   Write-Output 'DESKTOP_TO_OS_NSIS_ROLLBACK=PASS'
 } finally {
@@ -104,5 +114,11 @@ try {
        [System.StringComparison]::OrdinalIgnoreCase) -and
       (Test-Path -LiteralPath $dest)) {
     Remove-Item -LiteralPath $dest -Recurse -Force -ErrorAction SilentlyContinue
+  }
+  if ($createdProfile -and
+      $profile.StartsWith($env:APPDATA + [IO.Path]::DirectorySeparatorChar,
+        [System.StringComparison]::OrdinalIgnoreCase) -and
+      (Test-Path -LiteralPath $profile)) {
+    Remove-Item -LiteralPath $profile -Recurse -Force -ErrorAction SilentlyContinue
   }
 }
