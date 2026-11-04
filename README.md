@@ -30,7 +30,7 @@ checkouts reais; veja [LOCAL-DEVELOPMENT.md](LOCAL-DEVELOPMENT.md).
 
 A CI Windows usa um **único** produtor NSIS: o workflow reutilizável
 `windows-desktop-dev.yml` do `ordax-os`, pinado em
-`babb9b69db0f63a9aebb34db44c94ff00d372874`. O repositório privado
+`848584c9a14f85b5c591d682d91f9e5c32a1e0d9`. O repositório privado
 Desktop fornece o commit da shell com token somente leitura; o OS continua
 produzindo Native e Surface. O manifesto instalado deve vincular os dois SHAs
 e identificar Desktop como proprietário da shell e OS como proprietário do

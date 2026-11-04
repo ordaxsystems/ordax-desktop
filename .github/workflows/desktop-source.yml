@@ -68,9 +68,9 @@ jobs:
   windows-installer:
     name: Canonical Windows installer (detached Desktop + OS)
     needs: windows-source
-    uses: ordaxsystems/ordax-os/.github/workflows/windows-desktop-dev.yml@babb9b69db0f63a9aebb34db44c94ff00d372874
+    uses: ordaxsystems/ordax-os/.github/workflows/windows-desktop-dev.yml@848584c9a14f85b5c591d682d91f9e5c32a1e0d9
     with:
-      os_sha: babb9b69db0f63a9aebb34db44c94ff00d372874
+      os_sha: 848584c9a14f85b5c591d682d91f9e5c32a1e0d9
       desktop_sha: ${{ github.event.pull_request.head.sha || github.sha }}
     permissions:
       contents: read
