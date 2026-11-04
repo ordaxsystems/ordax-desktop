@@ -66,5 +66,10 @@ Remove-Item Env:\ORDAX_DESKTOP_ISOLATED_ASAR
 ```
 
 Essa prova cobre substituição, hash, recibo, falha e rollback com os **bytes
-reais do ASAR**, sem modificar a instalação operacional. **Não** substitui o
-smoke com inicialização real de uma nova revisão ou homologação do NSIS Stable.
+reais do ASAR**, sem modificar a instalação operacional. Quando o processo
+iniciado pelo utilitário não alcança `Native Surface ready`, somente a árvore
+desse PID é encerrada antes de restaurar o `app.asar` anterior. Se o processo
+não puder ser encerrado ou outro Desktop estiver em execução, a restauração
+falha fechada e preserva o rollback para recuperação segura.
+**Não** substitui o smoke com inicialização real de uma nova revisão ou
+a homologação do NSIS Stable.

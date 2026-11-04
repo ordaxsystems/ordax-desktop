@@ -168,27 +168,60 @@ function processList(exe){
   return output.split(/\r?\n/).filter(line=>
     /^"OrdaX OS Desktop Dev\.exe","[0-9]+",/i.test(line));
 }
+function childAlive(child){
+  if(child.exitCode!==null||child.signalCode!==null)return false;
+  if(!Number.isSafeInteger(child.pid)||child.pid<1)return false;
+  try{process.kill(child.pid,0);return true}
+  catch(error){if(error.code==='ESRCH')return false;throw error}
+}
+async function stopFailedBoot(child,{alive=childAlive,terminate}={}){
+  // Only the newly launched candidate's PID, never an unrelated user's process.
+  if(!alive(child))return 'ALREADY_STOPPED';
+  assert(Number.isSafeInteger(child.pid)&&child.pid>0,'Invalid candidate Desktop PID');
+  const stop=terminate||((pid)=>execFileSync('taskkill.exe',[
+    '/PID',String(pid),'/T','/F'
+  ],{encoding:'utf8',timeout:15000,windowsHide:true}));
+  try{await stop(child.pid)}
+  catch(error){if(alive(child))throw Error('Cannot stop unhealthy candidate: '+error.message)}
+  for(let i=0;i<25;i++){
+    if(!alive(child))return 'STOPPED';
+    await delay(200);
+  }
+  throw Error('Candidate Desktop did not exit after targeted stop');
+}
 async function startAndConfirm(loc,logSize){
   const child=spawn(loc.exe,[],{cwd:loc.install,detached:true,stdio:'ignore',windowsHide:false});
+  // Retain error observation even after detaching: do not crash on spawn failure.
+  let spawnError=null;
+  child.on('error',error=>{spawnError=error});
   child.unref();
-  const alive=()=>{try{process.kill(child.pid,0);return true}catch{return false}};
-  const logfile=path.join(loc.profile,'desktop.log');
-  for(let i=0;i<27;i++){
-    await delay(1500);
-    if(!alive())return false;
-    if(fs.existsSync(logfile)){
-      const stats=fs.statSync(logfile);
-      if(stats.size>=logSize&&stats.size-logSize<=3*1024*1024){
-        const fd=fs.openSync(logfile,'r');
-        try{
-          const b=Buffer.alloc(stats.size-logSize);
-          fs.readSync(fd,b,0,b.length,logSize);
-          if(b.toString('utf8').includes('Native Surface ready:'))return true;
-        } finally{fs.closeSync(fd)}
+  let healthy=false;
+  try{
+    const logfile=path.join(loc.profile,'desktop.log');
+    for(let i=0;i<27;i++){
+      await delay(1500);
+      if(spawnError)throw spawnError;
+      if(!childAlive(child))return false;
+      if(fs.existsSync(logfile)){
+        const stats=fs.statSync(logfile);
+        if(stats.size>=logSize&&stats.size-logSize<=3*1024*1024){
+          const fd=fs.openSync(logfile,'r');
+          try{
+            const b=Buffer.alloc(stats.size-logSize);
+            fs.readSync(fd,b,0,b.length,logSize);
+            if(b.toString('utf8').includes('Native Surface ready:')){
+              healthy=true;
+              return true;
+            }
+          } finally{fs.closeSync(fd)}
+        }
       }
     }
+    return false;
+  }finally{
+    // A hung candidate must be stopped before the prior ASAR can be restored.
+    if(!healthy)await stopFailedBoot(child);
   }
-  return false;
 }
 async function install(loc,prepared,drivers={}){
   if(!prepared.changed)return 'CURRENT';
@@ -275,4 +308,4 @@ async function cli(){
   }
 }
 if(require.main===module)cli().catch(err=>{console.error('DESKTOP_SHELL_DELTA_BLOCKED='+err.message);process.exitCode=1});
-module.exports={parseArchive,encodeArchive,fileBytes,integrity,buildDelta,digest,decodeJson,prepare,processList,install};
+module.exports={parseArchive,encodeArchive,fileBytes,integrity,buildDelta,digest,decodeJson,prepare,processList,install,stopFailedBoot,childAlive};

@@ -245,3 +245,46 @@ test('unhealthy shell still running retains rollback rather than corrupting live
   assert.equal(digest(fsTxn.readFileSync(f.backup)),digest(f.original));
   assert.equal(fsTxn.existsSync(f.temporary),false);
 });
+
+test('stopFailedBoot stops only the launched candidate PID',async()=>{
+  const {stopFailedBoot}=require('./dev-shell-delta.cjs');
+  const candidate={pid:37519},calls=[];
+  let running=true;
+  const result=await stopFailedBoot(candidate,{
+    alive:()=>running,
+    terminate:pid=>{calls.push(pid);running=false},
+  });
+  assert.equal(result,'STOPPED');
+  assert.deepEqual(calls,[37519]);
+});
+test('stopFailedBoot never kills an already exited candidate',async()=>{
+  const {stopFailedBoot}=require('./dev-shell-delta.cjs');
+  assert.equal(await stopFailedBoot({pid:123},{
+    alive:()=>false,
+    terminate:()=>{throw Error('Must not terminate an exited PID')},
+  }),'ALREADY_STOPPED');
+});
+test('stopFailedBoot refuses an invalid PID before termination',async()=>{
+  const {stopFailedBoot}=require('./dev-shell-delta.cjs');
+  await assert.rejects(stopFailedBoot({pid:-1},{
+    alive:()=>true,terminate:()=>{throw Error('Must not call taskkill')},
+  }),/Invalid candidate Desktop PID/);
+});
+test('failed candidate termination preserves backup instead of implying recovery',async()=>{
+  const {stopFailedBoot}=require('./dev-shell-delta.cjs');
+  await assert.rejects(stopFailedBoot({pid:1234},{
+    alive:()=>true,terminate:()=>{throw Error('access denied')},
+  }),/Cannot stop unhealthy candidate/);
+});
+test('targeted Windows process-tree stop works against an isolated node child',
+ {skip:process.platform!=='win32'},async t=>{
+  const {spawn}=require('node:child_process');
+  const {stopFailedBoot,childAlive}=require('./dev-shell-delta.cjs');
+  const child=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{
+    stdio:'ignore',windowsHide:true});
+  t.after(()=>{if(childAlive(child))child.kill()});
+  // There is no OrdaX process or user session involved in this test.
+  assert.ok(Number.isSafeInteger(child.pid));
+  assert.equal(await stopFailedBoot(child),'STOPPED');
+  assert.equal(childAlive(child),false);
+});
