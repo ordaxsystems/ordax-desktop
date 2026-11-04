@@ -288,3 +288,107 @@ test('targeted Windows process-tree stop works against an isolated node child',
   assert.equal(await stopFailedBoot(child),'STOPPED');
   assert.equal(childAlive(child),false);
 });
+
+const {recoverInterrupted}=require('./dev-shell-delta.cjs');
+test('interrupted pre-swap staging is cleaned without touching installed ASAR',t=>{
+  const f=isolatedTransaction();
+  t.after(()=>fsTxn.rmSync(f.root,{recursive:true,force:true}));
+  fsTxn.copyFileSync(f.prepared.candidate,f.temporary);
+  assert.equal(recoverInterrupted(f.loc,{list:()=>[]}), 'CLEANED');
+  assert.equal(digest(fsTxn.readFileSync(f.loc.live)),digest(f.original));
+  assert.equal(fsTxn.existsSync(f.temporary),false);
+});
+test('crash after live-to-backup rename restores missing shell automatically',t=>{
+  const f=isolatedTransaction();
+  t.after(()=>fsTxn.rmSync(f.root,{recursive:true,force:true}));
+  fsTxn.renameSync(f.loc.live,f.backup);
+  fsTxn.copyFileSync(f.prepared.candidate,f.temporary);
+  assert.equal(recoverInterrupted(f.loc,{list:()=>[]}), 'RESTORED');
+  assert.equal(digest(fsTxn.readFileSync(f.loc.live)),digest(f.original));
+  assert.equal(fsTxn.existsSync(f.backup),false);
+  assert.equal(fsTxn.existsSync(f.temporary),false);
+});
+test('crash after candidate swap but before health receipt restores old ASAR',t=>{
+  const f=isolatedTransaction();
+  t.after(()=>fsTxn.rmSync(f.root,{recursive:true,force:true}));
+  fsTxn.renameSync(f.loc.live,f.backup);
+  fsTxn.copyFileSync(f.prepared.candidate,f.loc.live);
+  assert.equal(recoverInterrupted(f.loc,{list:()=>[]}), 'RESTORED');
+  assert.equal(digest(fsTxn.readFileSync(f.loc.live)),digest(f.original));
+  assert.equal(fsTxn.existsSync(f.backup),false);
+});
+test('crash after verified health receipt retains new ASAR and removes leftover backup',t=>{
+  const f=isolatedTransaction();
+  t.after(()=>fsTxn.rmSync(f.root,{recursive:true,force:true}));
+  fsTxn.renameSync(f.loc.live,f.backup);
+  fsTxn.copyFileSync(f.prepared.candidate,f.loc.live);
+  const accepted={schema:'ordax.desktop-shell-delta-installed/1',
+    installed_asar_sha256:f.prepared.receipt.new_asar_sha256,
+    desktop_source_sha:f.prepared.receipt.source_commit,
+    boot_smoke:'Native Surface ready'};
+  fsTxn.writeFileSync(pathTxn.join(f.loc.profile,'desktop-shell-delta-receipt.json'),
+    JSON.stringify(accepted));
+  assert.equal(recoverInterrupted(f.loc,{list:()=>[]}), 'COMMITTED');
+  assert.equal(digest(fsTxn.readFileSync(f.loc.live)),
+    f.prepared.receipt.new_asar_sha256);
+  assert.equal(fsTxn.existsSync(f.backup),false);
+});
+test('previous receipt attests original backup and allows safe restoration',t=>{
+  const f=isolatedTransaction();
+  t.after(()=>fsTxn.rmSync(f.root,{recursive:true,force:true}));
+  fsTxn.writeFileSync(pathTxn.join(f.loc.profile,'desktop-shell-delta-receipt.json'),
+    JSON.stringify({schema:'ordax.desktop-shell-delta-installed/1',
+      installed_asar_sha256:digest(f.original)}));
+  fsTxn.renameSync(f.loc.live,f.backup);
+  fsTxn.copyFileSync(f.prepared.candidate,f.loc.live);
+  assert.equal(recoverInterrupted(f.loc,{list:()=>[]}), 'RESTORED');
+  assert.equal(digest(fsTxn.readFileSync(f.loc.live)),digest(f.original));
+});
+test('unknown receipt or tampered backup blocks recovery without erasing evidence',t=>{
+  const f=isolatedTransaction();
+  t.after(()=>fsTxn.rmSync(f.root,{recursive:true,force:true}));
+  fsTxn.renameSync(f.loc.live,f.backup);
+  fsTxn.copyFileSync(f.prepared.candidate,f.loc.live);
+  fsTxn.writeFileSync(pathTxn.join(f.loc.profile,'desktop-shell-delta-receipt.json'),
+    JSON.stringify({schema:'ordax.desktop-shell-delta-installed/1',
+      installed_asar_sha256:'a'.repeat(64)}));
+  assert.throws(()=>recoverInterrupted(f.loc,{list:()=>[]}),/Neither live nor backup/);
+  assert.equal(fsTxn.existsSync(f.backup),true);
+  fsTxn.writeFileSync(pathTxn.join(f.loc.profile,'desktop-shell-delta-receipt.json'),
+    JSON.stringify({schema:'ordax.desktop-shell-delta-installed/1',
+      installed_asar_sha256:digest(f.original)}));
+  fsTxn.appendFileSync(f.backup,'tamper');
+  assert.throws(()=>recoverInterrupted(f.loc,{list:()=>[]}),/Neither live nor backup/);
+  assert.equal(fsTxn.existsSync(f.backup),true);
+});
+test('recovery refuses to swap files while any Desktop process is running',t=>{
+  const f=isolatedTransaction();
+  t.after(()=>fsTxn.rmSync(f.root,{recursive:true,force:true}));
+  fsTxn.renameSync(f.loc.live,f.backup);
+  assert.throws(()=>recoverInterrupted(f.loc,{list:()=>[17234]}),/Desktop running/);
+  assert.equal(fsTxn.existsSync(f.backup),true);
+  assert.equal(fsTxn.existsSync(f.loc.live),false);
+});
+
+test('interrupted recovery does not race a pending Native OS activation',t=>{
+  const f=isolatedTransaction();
+  t.after(()=>fsTxn.rmSync(f.root,{recursive:true,force:true}));
+  fsTxn.renameSync(f.loc.live,f.backup);
+  fsTxn.writeFileSync(pathTxn.join(f.loc.profile,'desktop-dev-update-state.json'),
+    JSON.stringify({pendingSha:'a'.repeat(40),attemptedSha:null}));
+  assert.throws(()=>recoverInterrupted(f.loc,{list:()=>[]}),
+    /Native OS update transaction active/);
+  assert.equal(fsTxn.existsSync(f.backup),true);
+  assert.equal(fsTxn.existsSync(f.loc.live),false);
+});
+test('installed Windows ASAR is restored after interrupted candidate swap in isolated workspace',
+ {skip:!process.env.ORDAX_DESKTOP_ISOLATED_ASAR},t=>{
+  const original=fsTxn.readFileSync(process.env.ORDAX_DESKTOP_ISOLATED_ASAR);
+  const f=isolatedTransaction(original);
+  t.after(()=>fsTxn.rmSync(f.root,{recursive:true,force:true}));
+  fsTxn.renameSync(f.loc.live,f.backup);
+  fsTxn.copyFileSync(f.prepared.candidate,f.loc.live);
+  assert.equal(recoverInterrupted(f.loc,{list:()=>[]}), 'RESTORED');
+  assert.equal(digest(fsTxn.readFileSync(f.loc.live)),digest(original));
+  assert.equal(fsTxn.existsSync(f.backup),false);
+});

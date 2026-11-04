@@ -121,18 +121,91 @@ function officialSources(repo){
   }
   return {revision,manifest,files:trusted};
 }
-function locations(){
+function locations({allowMissingLive=false}={}){
   assert(process.platform==='win32','Windows Dev update only');
   const install=path.join(process.env.LOCALAPPDATA,'Programs','OrdaX OS Desktop Dev');
   const profile=path.join(process.env.APPDATA,'OrdaX OS Desktop Dev');
   const repo=path.resolve(__dirname,'..');
   const exe=path.join(install,'OrdaX OS Desktop Dev.exe');
   const live=path.join(install,'resources','app.asar');
-  for(const file of [exe,live]){
-    assert(fs.statSync(file).isFile()&&!fs.lstatSync(file).isSymbolicLink(),
-      'Missing or untrusted Desktop installation');
+  assert(fs.statSync(exe).isFile()&&!fs.lstatSync(exe).isSymbolicLink(),
+    'Missing or untrusted Desktop executable');
+  try {
+    const stat=fs.lstatSync(live);
+    assert(stat.isFile()&&!stat.isSymbolicLink(),'Untrusted Desktop ASAR');
+  } catch(error) {
+    if(!allowMissingLive||error.code!=='ENOENT')throw error;
   }
   return {install,profile,repo,exe,live};
+}
+function inspectShellArchive(file){
+  const stat=fs.lstatSync(file);
+  assert(stat.isFile()&&!stat.isSymbolicLink(),'Unsafe interrupted shell file');
+  const bytes=fs.readFileSync(file);
+  const archive=parseArchive(bytes);
+  const pkg=decodeJson(fileBytes(archive,'package.json').toString('utf8'));
+  assert(pkg.name==='ordax-os-desktop-dev'&&pkg.version==='0.1.0-alpha.20',
+    'Interrupted shell package identity mismatch');
+  fileBytes(archive,'main.cjs');
+  return digest(bytes);
+}
+// Interrupted Dev transaction repair. Runs only on an explicit --install,
+// never while Desktop is running or in read-only --verify.
+function recoverInterrupted(loc,{list=processList}={}){
+  const {exe,live,profile}=loc;
+  const backup=path.join(path.dirname(live),'app.asar.delta-rollback');
+  const ready=path.join(path.dirname(live),'app.asar.delta-ready');
+  const recPath=path.join(profile,'desktop-shell-delta-receipt.json');
+  const recTmp=recPath+'.tmp';
+  if(![backup,ready,recTmp].some(f=>fs.existsSync(f)))return 'CLEAN';
+  assert(!list(exe).length,'Desktop running: cannot repair interrupted shell transaction');
+  const native=decodeJson(fs.readFileSync(
+    path.join(profile,'desktop-dev-update-state.json'),'utf8'));
+  assert(!native.pendingSha&&!native.attemptedSha,
+    'Native OS update transaction active; interrupted shell recovery blocked');
+  const exists=f=>fs.existsSync(f);
+  const rec=exists(recPath)?decodeJson(fs.readFileSync(recPath,'utf8')):null;
+  if(rec)assert(rec.schema==='ordax.desktop-shell-delta-installed/1'&&
+    /^[a-f0-9]{64}$/i.test(rec.installed_asar_sha256),
+    'Untrusted previous shell delta receipt');
+  const oldHash=exists(backup)?inspectShellArchive(backup):null;
+  const liveHash=exists(live)?inspectShellArchive(live):null;
+  if(rec&&oldHash&&rec.installed_asar_sha256!==oldHash&&
+     rec.installed_asar_sha256!==liveHash){
+    throw Error('Neither live nor backup matches trusted shell receipt');
+  }
+  let status='CLEAN';
+  if(oldHash){
+    if(rec&&rec.installed_asar_sha256===liveHash){
+      // Health receipt was committed before backup removal.
+      fs.rmSync(backup);
+      status='COMMITTED';
+    }else{
+      // The prior ASAR is the only known-good shell; do not keep a
+      // candidate left behind by a crash between rename and health.
+      if(exists(live))fs.rmSync(live);
+      fs.renameSync(backup,live);
+      status='RESTORED';
+    }
+  }else{
+    assert(liveHash!==null,'No valid Desktop shell or rollback copy');
+    if(rec)assert(rec.installed_asar_sha256===liveHash,
+      'Live ASAR differs from existing shell delta receipt');
+  }
+  // Clean non-authoritative staging only after live ASAR was verified.
+  if(exists(ready)){
+    assert(fs.lstatSync(ready).isFile()&&!fs.lstatSync(ready).isSymbolicLink(),
+      'Unsafe staged shell file');
+    fs.rmSync(ready);
+    if(status==='CLEAN')status='CLEANED';
+  }
+  if(exists(recTmp)){
+    assert(fs.lstatSync(recTmp).isFile()&&!fs.lstatSync(recTmp).isSymbolicLink(),
+      'Unsafe pending shell receipt');
+    fs.rmSync(recTmp);
+    if(status==='CLEAN')status='CLEANED';
+  }
+  return status;
 }
 function prepare({repo,profile,live}){
   const {revision,manifest,files}=officialSources(repo);
@@ -292,7 +365,11 @@ async function cli(){
   const arg=process.argv[2];
   assert(['--verify','--install'].includes(arg),
     'Usage: node ci/dev-shell-delta.cjs --verify | --install (Dev only)');
-  const loc=locations();
+  const loc=locations({allowMissingLive:arg==='--install'});
+  if(arg==='--install'){
+    const recovery=recoverInterrupted(loc);
+    if(recovery!=='CLEAN')console.log('DESKTOP_SHELL_INTERRUPTED='+recovery);
+  }
   const state=prepare(loc);
   if(!state.changed){console.log('DESKTOP_SHELL_DELTA=CURRENT');return}
   try{
@@ -308,4 +385,4 @@ async function cli(){
   }
 }
 if(require.main===module)cli().catch(err=>{console.error('DESKTOP_SHELL_DELTA_BLOCKED='+err.message);process.exitCode=1});
-module.exports={parseArchive,encodeArchive,fileBytes,integrity,buildDelta,digest,decodeJson,prepare,processList,install,stopFailedBoot,childAlive};
+module.exports={parseArchive,encodeArchive,fileBytes,integrity,buildDelta,digest,decodeJson,prepare,processList,install,stopFailedBoot,childAlive,recoverInterrupted};
