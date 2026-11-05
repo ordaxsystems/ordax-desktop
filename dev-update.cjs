@@ -494,7 +494,7 @@ async function stageMain({ userData, template, log = () => {}, remote = OFFICIAL
             baseline,remoteSha],staging,10000);
           if (ancestor.ok) {
             const changed = await runGit(['-C',staging,'diff','--no-renames',
-              '--name-only','-z',baseline,remoteSha],staging,15000);
+              '--name-only','-z',baseline,remoteSha],staging,15000,65536);
             if (changed.ok && onlyNonRuntimeChanges(changed.stdout)) {
               // Recheck after I/O; never overwrite a concurrent promotion,
               // rollback pin, rejection or pending candidate.
