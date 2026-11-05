@@ -1,5 +1,5 @@
 'use strict';
-const { fork, spawn } = require('node:child_process');
+const { fork } = require('node:child_process');
 const { join } = require('node:path');
 const { existsSync } = require('node:fs');
 const net = require('node:net');
@@ -145,12 +145,12 @@ async function startHost({root,template=root,stateDirectory,userData,log,builtAs
     if(await isReady(port,staticHost?nativeSessionToken:null)){
       log((staticHost?'Installed Native':'Vite fallback')+
         ' http-ready after '+Math.round((Date.now()-startedAt)/1000)+'s; probes='+probes);
-      return {child,url:'http://127.0.0.1:'+port};
+      return {child,url:'http://127.0.0.1:'+port,template};
     }
     await new Promise(resolve=>setTimeout(resolve,350));
   }
   const exited=hasHostExited(child);
-  stopHost(child);
+  stopHost(child,template);
   throw Error(launchError
     ? 'Canonical Native server could not start: '+(launchError.code||'SPAWN_ERROR')
     : exited
@@ -191,14 +191,21 @@ function canAutoRelaunchHost({packaged,alreadyRetried,productIdentityPresent}={}
   return packaged===true && alreadyRetried===false &&
     productIdentityPresent===false;
 }
-function stopHost(child) {
-  // Never taskkill a PID after it has exited: Windows can reuse that PID.
-  if(!child?.pid || hasHostExited(child)) return;
-  if(process.platform==='win32') {
-    const kill=spawn('taskkill',['/PID',String(child.pid),'/T','/F'],{
-      windowsHide:true,stdio:'ignore',
-    });
-    kill.on('error',()=>{});
-  } else child.kill('SIGTERM');
+function stopHost(child,template=null) {
+  // Reuse the OS-owned synchronous Win32 process-tree policy. The old
+  // asynchronous taskkill outlived Electron and could strand the supervised
+  // Product Runtime when the parent disappeared. Never scan by process name.
+  if(!child?.pid || hasHostExited(child)) return true;
+  if(process.platform==='win32' && typeof template==='string') {
+    try {
+      const {stopOwnedWindowsProcessTree}=require(join(template,
+        'system','adapters','desktop','owned-process-tree.cjs'));
+      if(stopOwnedWindowsProcessTree(child.pid)) return true;
+    } catch { /* Older verified Native fallback may lack the policy. */ }
+  }
+  // Fail closed: affect only the exact child PID rather than guessing its
+  // descendants. The caller's next Product enrollment must reattest identity.
+  try { child.kill('SIGTERM'); } catch {}
+  return false;
 }
 module.exports={startHost,stopHost,freePort,isReady,watchHostAfterReady,canAutoRelaunchHost};
