@@ -34,9 +34,14 @@ function resolveInstalledGit({
   return "git";
 }
 
-function git(argv, cwd, timeoutMs = 90000) {
+function git(argv, cwd, timeoutMs = 90000, maxStdoutBytes = 1024) {
+  // The default diagnostic output is small. A Git diff used to skip a
+  // Native build must instead capture every path, or report failure:
+  // silently keeping only the last 1024 bytes could hide a changed owner.
+  if (!Number.isInteger(maxStdoutBytes) || maxStdoutBytes < 1024 ||
+      maxStdoutBytes > 65536) throw new RangeError('Invalid bounded Git stdout limit');
   return new Promise(resolve => {
-    let stdout = '', stderr = '', finished = false;
+    let stdout = '', stderr = '', finished = false, stdoutBytes = 0;
     // This updater accesses the public, immutable OrdaX OS source only.
 // Global Git Credential Manager / gh auth helpers can block for minutes
 // even on anonymous reads, exceeding the 25s discovery deadline. Empty
@@ -47,12 +52,16 @@ const child = spawn(resolveInstalledGit(), ['-c','credential.helper=',...argv], 
       stdio:['ignore','pipe','pipe']
     });
     const timer = setTimeout(() => child.kill(), timeoutMs);
-    child.stdout.on('data', b => { stdout = (stdout + b.toString()).slice(-1024); });
+    child.stdout.on('data', b => {
+      stdoutBytes += b.length;
+      stdout = (stdout + b.toString()).slice(-maxStdoutBytes);
+    });
     child.stderr.on('data', b => { stderr = (stderr + b.toString()).slice(-1024); });
     const finish = ok => {
       if (finished) return;
       finished = true; clearTimeout(timer);
-      resolve({ ok, stdout:stdout.trim(), stderr:stderr.trim() });
+      resolve({ ok:ok && (maxStdoutBytes === 1024 || stdoutBytes <= maxStdoutBytes),
+        stdout:stdout.trim(), stderr:stderr.trim() });
     };
     child.on('error', () => finish(false));
     child.on('close', code => finish(code === 0));

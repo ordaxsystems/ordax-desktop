@@ -9,6 +9,28 @@
 - **Runtime MCP / Capability Fabric:** seus respectivos owners; nenhuma
   implementação é copiada para o Electron.
 
+## Atualização Dev por impacto real
+
+O materializador Git de `dev-update.cjs` é o **único owner Windows**
+da classificação de revisões da `ordax-os/main`. Antes de compilar,
+compara as revisões Git exatas desde a última versão Native saudável
+(ou desde o bundle instalado cujo SHA e bytes tenham sido verificados).
+Apenas arquivos explicitamente não-runtime — documentação sem contratos/
+evidências, testes, governança CI e o script Linux `ordax-pull` — podem
+dispensar o build Windows. Alterações em `system/`, contratos Native,
+Surface, bridge Web, emulador ou caminhos desconhecidos sempre seguem
+o ciclo normal de build, prova de saúde e rollback.
+
+O campo `nonRuntimeMainSha` em
+`desktop-dev-update-state.json` memoriza a última revisão `main` já
+comprovada sem impacto para evitar clonar o mesmo commit a cada minuto.
+**Não é um SHA ativado nem nova autoridade de distribuição**: o
+`activeSha` e seu recibo de build continuam sendo a verdade operacional.
+Ao surgir código Native, a comparação volta ao `activeSha` original;
+quando há alteração de versão saudável, o marcador não-runtime é limpo.
+O diff Git precisa ser completo, delimitado por NUL e limitado em bytes;
+erros, truncamento e donos não previstos exigem validação normal.
+
 ## Único produtor
 
 A CI `.github/workflows/desktop-source.yml` valida este repositório e chama

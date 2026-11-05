@@ -390,6 +390,146 @@ test('verified bundled main is current without staging, recompilation or a false
   assert.equal(cloneCalls,1);
 });
 
+
+test('docs and CI-only main commits preserve bundled Native runtime without relaunch or repeat clone',async t=>{
+  const f=fixture(t);
+  installVerifiedBundledFixture(f,f.first);
+  const path=join(f.source,'docs','BUILD-AUTONOMY.md');
+  mkdirSync(join(f.source,'docs'),{recursive:true});
+  writeFileSync(path,'Creator policy change: no Windows Native bytes');
+  gitCli(['add','.'],f.source);
+  gitCli(['commit','-qm','CI-only freshness policy'],f.source);
+  const ciSha=gitCli(['rev-parse','HEAD'],f.source);
+  let clones=0,builds=0;
+  const runGit=async(...args)=>{
+    if(args[0].includes('clone'))clones++;
+    return f.offlineGit(...args);
+  };
+  const result=await stageMain({userData:f.userData,template:f.template,runGit,
+    buildCandidate:async()=>{builds++;throw Error('must not compile docs-only main');}});
+  assert.deepEqual(result,{status:'no-runtime-change',sha:ciSha});
+  assert.equal(builds,0);
+  assert.equal(clones,1);
+  assert.equal(readState(f.userData).activeSha,null);
+  assert.equal(readState(f.userData).nonRuntimeMainSha,ciSha);
+  assert.equal(readState(f.userData).pendingSha,null);
+  const again=await stageMain({userData:f.userData,template:f.template,runGit,
+    buildCandidate:async()=>{builds++;throw Error('must not build cached no-op');}});
+  assert.deepEqual(again,result);
+  assert.equal(clones,1,'a confirmed no-op main SHA must not clone on each poll');
+
+  // A later Native change must compare all the way back to the still-active
+  // bundled source, not merely to the last ignored main revision.
+  const nativeSha=f.advance();
+  const real=await stageMain({userData:f.userData,template:f.template,
+    runGit,buildCandidate:async (...args)=>{builds++;return f.offlineBuild(...args);}});
+  assert.equal(real.status,'staged');
+  assert.equal(real.sha,nativeSha);
+  assert.equal(readState(f.userData).nonRuntimeMainSha,null);
+  assert.equal(builds,1);
+  assert.equal(clones,2);
+});
+
+test('active Git runtime survives CI-only main changes, but Native and contracts still stage',async t=>{
+  const f=fixture(t);
+  await stageMain({userData:f.userData,template:f.template,
+    runGit:f.offlineGit,buildCandidate:f.offlineBuild});
+  const selected=await chooseBootVersion({userData:f.userData,template:f.template});
+  confirmHealthy(f.userData,selected.sha);
+  assert.equal(readState(f.userData).activeSha,f.first);
+
+  mkdirSync(join(f.source,'tools','ci'),{recursive:true});
+  writeFileSync(join(f.source,'tools','ci','creator_owner_impact.py'),'# CI-only producer classifier');
+  gitCli(['add','.'],f.source);gitCli(['commit','-qm','Creator CI-only'],f.source);
+  const ciSha=gitCli(['rev-parse','HEAD'],f.source);
+  let builds=0,clones=0;
+  const runGit=async(...args)=>{if(args[0].includes('clone'))clones++;return f.offlineGit(...args);};
+  const unchanged=await stageMain({userData:f.userData,template:f.template,
+    runGit,buildCandidate:async()=>{builds++;throw Error('CI-only must not compile');}});
+  assert.equal(unchanged.status,'no-runtime-change');
+  assert.equal(unchanged.sha,ciSha);
+  assert.equal(readState(f.userData).activeSha,f.first);
+  assert.equal(readState(f.userData).previousSha,null);
+  assert.equal(readState(f.userData).pendingSha,null);
+  await stageMain({userData:f.userData,template:f.template,runGit,
+    buildCandidate:async()=>{builds++;throw Error('CI-only repeat must not compile');}});
+  assert.equal(clones,1);
+  assert.equal(builds,0);
+
+  const contract=join(f.source,'docs','contracts','update-policy.json');
+  writeFileSync(contract,JSON.stringify({schema:'fixture/1',updatePolicy:'native-rebuild-required'}));
+  gitCli(['add','.'],f.source);gitCli(['commit','-qm','shared Native contract changed'],f.source);
+  const actual=await stageMain({userData:f.userData,template:f.template,runGit,
+    buildCandidate:async(...args)=>{builds++;return f.offlineBuild(...args);}});
+  assert.equal(actual.status,'staged','contract changes must not be classified CI-only');
+  assert.equal(builds,1);
+  assert.equal(readState(f.userData).nonRuntimeMainSha,null);
+});
+
+test('malformed or unsupported Git diff never skips a Native build',async t=>{
+  const f=fixture(t);
+  installVerifiedBundledFixture(f,f.first);
+  mkdirSync(join(f.source,'docs'),{recursive:true});
+  writeFileSync(join(f.source,'docs','README.md'),'docs-only source');
+  gitCli(['add','.'],f.source);gitCli(['commit','-qm','documentation'],f.source);
+  let builds=0;
+  const runGit=async(args,cwd,timeout)=>{
+    if(args.includes('diff'))return {ok:true,stdout:'docs/README.md'};
+    return f.offlineGit(args,cwd,timeout);
+  };
+  const result=await stageMain({userData:f.userData,template:f.template,runGit,
+    buildCandidate:async(...args)=>{builds++;return f.offlineBuild(...args);}});
+  assert.equal(result.status,'staged');
+  assert.equal(builds,1);
+  assert.equal(readState(f.userData).nonRuntimeMainSha,null);
+});
+
+test('unknown paths and Native source changes cannot hide behind unrelated documentation',async t=>{
+  for(const path of ['system/composition/native/index.html',
+                      'docs/evidence/runtime-proof.json',
+                      'docs/contracts/update-policy.json',
+                      'tools/windows-emulator/dev-supervisor.mjs',
+                      'new-owner/unknown.txt']) {
+    const f=fixture(t);
+    installVerifiedBundledFixture(f,f.first);
+    const target=join(f.source,...path.split('/'));
+    mkdirSync(require('node:path').dirname(target),{recursive:true});
+    writeFileSync(target,'updated runtime input');
+    mkdirSync(join(f.source,'docs'),{recursive:true});
+    writeFileSync(join(f.source,'docs','README.md'),'also changed docs');
+    gitCli(['add','.'],f.source);gitCli(['commit','-qm','mixed Native and documentation'],f.source);
+    let builds=0;
+    const result=await stageMain({userData:f.userData,template:f.template,
+      runGit:f.offlineGit,buildCandidate:async(...args)=>{builds++;return f.offlineBuild(...args);}});
+    assert.equal(result.status,'staged',path);
+    assert.equal(builds,1,path);
+    assert.equal(readState(f.userData).nonRuntimeMainSha,null,path);
+  }
+});
+
+test('large Git diff cannot hide an unknown runtime owner behind truncated stdout',async t=>{
+  const f=fixture(t);
+  installVerifiedBundledFixture(f,f.first);
+  mkdirSync(join(f.source,'a-new-runtime-owner'),{recursive:true});
+  writeFileSync(join(f.source,'a-new-runtime-owner','new-native-contract.json'),'unknown owner input');
+  mkdirSync(join(f.source,'docs'),{recursive:true});
+  for(let i=0;i<45;i++){
+    writeFileSync(join(f.source,'docs','unrelated-review-documentation-'+String(i).padStart(3,'0')+'.md'),
+      'unrelated documentation');
+  }
+  gitCli(['add','.'],f.source);gitCli(['commit','-qm','mixed large docs plus new owner'],f.source);
+  let maxOutput=null,builds=0;
+  const runGit=async(...args)=>{
+    if(args[0].includes('diff'))maxOutput=args[3];
+    return f.offlineGit(...args);
+  };
+  const result=await stageMain({userData:f.userData,template:f.template,runGit,
+    buildCandidate:async(...args)=>{builds++;return f.offlineBuild(...args);}});
+  assert.equal(maxOutput,65536,'the full ownership diff must not be clipped to diagnostic 1 KB');
+  assert.equal(result.status,'staged');
+  assert.equal(builds,1,'an unknown source owner cannot be skipped by a truncated path list');
+});
+
 test('stale incompatible marker can be retired only by exact verified bundled main',async t=>{
   const f=fixture(t);
   const assets=installVerifiedBundledFixture(f,f.first);
