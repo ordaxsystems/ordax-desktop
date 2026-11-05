@@ -110,16 +110,13 @@ try {
       $nativeReceipt.source_commit -cne $surfaceLock.source_commit) {
     throw "Installed Desktop stage audit conflicts with canonical Native/Surface provenance"
   }
-  if ($stageReceipt.desktop_owner) {
-    if ($stageReceipt.desktop_owner -cne "ordaxsystems/ordax-desktop" -or
-        $stageReceipt.product_owner -cne "ordaxsystems/ordax-desktop" -or
-        $stageReceipt.source_authority -cne "ordaxsystems/ordax-desktop/package.json" -or
-        $stageReceipt.desktop_sha -cnotmatch "^[a-f0-9]{40}$") {
-      throw "Installed detached Desktop source audit is invalid"
-    }
-  } elseif ($stageReceipt.product_owner -cne "ordaxsystems/ordax-os" -or
-            $stageReceipt.source_authority -cne "tools/windows-desktop/package.json") {
-    throw "Installed single-source Desktop audit is invalid"
+  # Canonical Desktop NSIS must attest its Electron owner unconditionally.
+  # Historical OS-owned installers are tested only by the cross-version proof.
+  if ($stageReceipt.desktop_owner -cne "ordaxsystems/ordax-desktop" -or
+      $stageReceipt.product_owner -cne "ordaxsystems/ordax-desktop" -or
+      $stageReceipt.source_authority -cne "ordaxsystems/ordax-desktop/package.json" -or
+      $stageReceipt.desktop_sha -cnotmatch "^[a-f0-9]{40}$") {
+    throw "Installed canonical Desktop owner audit is invalid"
   }
   Write-Output "INSTALLED_DESKTOP_SOURCE_BOUNDARY=PASS"
   $compiledRoot = Join-Path $resources "runtime-template\\desktop-assets"
