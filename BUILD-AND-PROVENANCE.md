@@ -47,6 +47,26 @@ A CI mais recente do Desktop antes do novo pin, [#41934791675](https://github.co
 passou para `desktop_sha=249306fa`, mas ainda empacotava o `os_sha` antigo.
 A entrega com o novo `os_sha` só é homologada após CI e smoke NSIS próprios.
 
+**Gate pendente (04/11/2026, 21h34 BRT):** a CI
+[#41939483362](https://github.com/ordaxsystems/ordax-desktop/actions/runs/41939483362)
+tentou o NSIS com `os_sha=4916cf91`, mas falhou nos testes de contrato da
+fonte Desktop. A [PR #5](https://github.com/ordaxsystems/ordax-desktop/pull/5)
+reconciliou esses testes; a CI
+[#41942309250](https://github.com/ordaxsystems/ordax-desktop/actions/runs/41942309250)
+passou na validação de fonte, **mas dispensou o job NSIS** por impacto.
+Logo, esse par de SHAs ainda **não tem homologação de instalador**. A próxima
+validação aplicável é uma única execução oficial `workflow_dispatch` do
+`Desktop Source Contracts` na `main`, que obriga o job NSIS; não repetir
+builds anteriores nem presumir sucesso pelos testes de fonte.
+
+**Bloqueio independente do Product:** a
+[issue Runtime #327](https://github.com/ordaxsystems/ordax-runtime/issues/327)
+identifica risco de `machine_binding` do Product coincidir com o MCP auxiliar.
+A matrícula Owner OAuth/PKCE fica bloqueada até o owner Runtime corrigir a
+vinculação e o owner Platform confirmar a identidade existente. O status
+operacional e os gates Product continuam tendo como SSOT o
+`ordax-os/docs/CURRENT-STATE.md`, sem replicar cadastro ou credenciais aqui.
+
 **SSOT Product:** a autoridade da inscrição, do binário e dos grants fica em
 `ordax-os/docs/CURRENT-STATE.md`, na política
 `ordax-os/docs/contracts/runtime-component-trust-policy.json` e na evidência
