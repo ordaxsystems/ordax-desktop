@@ -409,3 +409,16 @@ test('operational NSIS install retires only a superseded Desktop Dev shell delta
     'do not delete profiles, grants, Runtime state or rollback evidence');
   assert.doesNotMatch(body,/RMDir|desktop-dev-update-state\.json|agent-settings\.json/);
 });
+
+
+test('new NSIS smoke cannot accept the historical OS-owned Electron receipt',()=>{
+  const source=fs.readFileSync(join(__dirname,'install-smoke.ps1'),'utf8');
+  assert.match(source,/\$stageReceipt\.desktop_owner -cne "ordaxsystems\/ordax-desktop"/);
+  assert.match(source,/\$stageReceipt\.product_owner -cne "ordaxsystems\/ordax-desktop"/);
+  assert.match(source,/\$stageReceipt\.source_authority -cne "ordaxsystems\/ordax-desktop\/package\.json"/);
+  assert.match(source,/\$stageReceipt\.desktop_sha -cnotmatch "\^\[a-f0-9\]\{40\}\$"/);
+  assert.doesNotMatch(source,/if \(\$stageReceipt\.desktop_owner\)/,
+    'Desktop owner must not be an optional condition');
+  assert.doesNotMatch(source,/tools\/windows-desktop\/package\.json/,
+    'canonical NSIS cannot accept OS-owned Electron source');
+});
