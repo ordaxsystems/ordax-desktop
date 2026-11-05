@@ -58,6 +58,24 @@ function stageFromFixture(f,options) {
   } finally {d.cleanup();}
 }
 
+
+test('staging refuses the removed OS-owned Electron input without a Desktop checkout',()=>{
+  const f=fixture();
+  try {
+    assert.throws(()=>stageStandalonePackage({
+      sourceRoot:f.root,osSha:SHA,verifyNative:()=>true
+    }),/requires an absolute external source directory/);
+    assert.equal(fs.existsSync(f.out),false,
+      'implicit OS-owned staging must not touch output');
+    const cli=spawnSync(process.execPath,[join(__dirname,'standalone-stage.cjs'),SHA],{
+      encoding:'utf8',windowsHide:true,
+    });
+    assert.notEqual(cli.status,0,'the one-argument legacy entrypoint must fail');
+    assert.match(cli.stderr,/--desktop-root/);
+  }finally{f.cleanup();}
+});
+
+
 test('stages a self-contained Desktop shell from verified OS resources without a second UI authority', () => {
   const f=fixture();
   try {
