@@ -456,9 +456,8 @@ test('active Git runtime survives CI-only main changes, but Native and contracts
   assert.equal(clones,1);
   assert.equal(builds,0);
 
-  const contract=join(f.source,'docs','contracts','surface-source.json');
-  const lock=JSON.parse(readFileSync(contract,'utf8'));
-  writeFileSync(contract,JSON.stringify({...lock,status:'canonical-updated'}));
+  const contract=join(f.source,'docs','contracts','update-policy.json');
+  writeFileSync(contract,JSON.stringify({schema:'fixture/1',updatePolicy:'native-rebuild-required'}));
   gitCli(['add','.'],f.source);gitCli(['commit','-qm','shared Native contract changed'],f.source);
   const actual=await stageMain({userData:f.userData,template:f.template,runGit,
     buildCandidate:async(...args)=>{builds++;return f.offlineBuild(...args);}});
