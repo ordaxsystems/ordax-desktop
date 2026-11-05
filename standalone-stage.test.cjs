@@ -296,7 +296,7 @@ test('external Desktop source rejects dirty files and relative paths before stag
     fs.writeFileSync(join(d.shell,'main.cjs'),'not the committed code');
     assert.throws(()=>stageStandalonePackage(args),/uncommitted or untracked/);
     assert.throws(()=>stageStandalonePackage({...args,desktopRoot:'./desktop'}),
-      /absolute source directory/);
+      /absolute.*source directory/);
     assert.equal(fs.existsSync(f.out),false);
   } finally {d.cleanup();f.cleanup();}
 });
@@ -346,7 +346,7 @@ test('rejects OS resources that shadow the installed stage receipt',()=>{
     pkg.build.extraResources.push({from:'../../docs/evidence/desktop-stage-manifest.json',
       to:'runtime-template/docs/evidence/desktop-stage-manifest.json'});
     fs.writeFileSync(join(f.shell,'package.json'),JSON.stringify(pkg));
-    assert.throws(()=>stageStandalonePackage({sourceRoot:f.root,osSha:SHA,verifyNative:()=>true}),
+    assert.throws(()=>stageFromFixture(f,{sourceRoot:f.root,osSha:SHA,verifyNative:()=>true}),
       /shadows reserved installed Desktop stage manifest/);
     assert.equal(fs.existsSync(f.out),false);
   } finally {f.cleanup();}
@@ -354,7 +354,7 @@ test('rejects OS resources that shadow the installed stage receipt',()=>{
 test('rejects altered standalone NSIS audit resource mapping',()=>{
   const f=fixture();
   try {
-    stageStandalonePackage({sourceRoot:f.root,osSha:SHA,verifyNative:()=>true});
+    stageFromFixture(f,{sourceRoot:f.root,osSha:SHA,verifyNative:()=>true});
     const pkgPath=join(f.out,'shell/package.json');
     const pkg=JSON.parse(fs.readFileSync(pkgPath,'utf8'));
     pkg.build.extraResources[1].to='runtime-template/other-receipt.json';
