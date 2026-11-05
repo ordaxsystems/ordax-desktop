@@ -43,13 +43,28 @@ function fixture() {
     cleanup:()=>fs.rmSync(root,{recursive:true,force:true})};
 }
 
+
+function stageFromFixture(f,options) {
+  // Retain security/packaging regression coverage, but exercise only the
+  // canonical detached Git producer. No test may grant an OS-owned Electron
+  // package to the current stage.
+  const d=detachedFixture(f);
+  try {
+    const {osSha,...rest}=options;
+    return stageStandalonePackage({
+      ...rest,sourceRoot:f.root,desktopRoot:d.shell,desktopSha:d.sha,
+      osSha:osSha===SHA?d.osSha:osSha,
+    });
+  } finally {d.cleanup();}
+}
+
 test('stages a self-contained Desktop shell from verified OS resources without a second UI authority', () => {
   const f=fixture();
   try {
-    const staged=stageStandalonePackage({sourceRoot:f.root,osSha:SHA,verifyNative:()=>true});
-    assert.equal(staged.os_sha,SHA);
+    const staged=stageFromFixture(f,{sourceRoot:f.root,osSha:SHA,verifyNative:()=>true});
+    assert.match(staged.os_sha,/^[a-f0-9]{40}$/);
     const content=verifyStandaloneStage(f.out);
-    assert.equal(content.os_sha,SHA);
+    assert.equal(content.os_sha,staged.os_sha);
     assert.ok(content.files.some(record=>record.path==='runtime-template/system/composition/native/index.html'));
     assert.ok(content.files.some(record=>record.path==='runtime-template/desktop-assets/source-provenance.json'));
     assert.ok(!content.files.some(record=>record.path.endsWith('packages.txt')));
@@ -59,12 +74,12 @@ test('stages a self-contained Desktop shell from verified OS resources without a
       {from:'../runtime-template',to:'runtime-template',filter:['**/*']},
       {from:'../stage-manifest.json',to:'runtime-template/docs/evidence/desktop-stage-manifest.json'}
     ]);
-    assert.equal(content.product_owner,'ordaxsystems/ordax-os');
+    assert.equal(content.product_owner,'ordaxsystems/ordax-desktop');
     assert.equal(content.runtime_owner,'ordaxsystems/ordax-os');
     assert.equal(pkg.build.directories.output,'../../windows-desktop-installer');
     assert.equal(fs.existsSync(join(f.out,'shell/installer.nsh')),true);
     assert.equal(fs.existsSync(join(f.out,'shell/package-lock.json')),true);
-    assert.throws(()=>stageStandalonePackage({sourceRoot:f.root,osSha:SHA,verifyNative:()=>true}),
+    assert.throws(()=>stageFromFixture(f,{sourceRoot:f.root,osSha:SHA,verifyNative:()=>true}),
       /cannot be silently overwritten/);
   } finally {f.cleanup();}
 });
@@ -72,9 +87,9 @@ test('stages a self-contained Desktop shell from verified OS resources without a
 test('requires a verified Native bundle and exact source SHA before touching out/',()=>{
   const f=fixture();
   try {
-    assert.throws(()=>stageStandalonePackage({sourceRoot:f.root,osSha:'bad',verifyNative:()=>true}),
+    assert.throws(()=>stageFromFixture(f,{sourceRoot:f.root,osSha:'bad',verifyNative:()=>true}),
       /exact 40-character/);
-    assert.throws(()=>stageStandalonePackage({sourceRoot:f.root,osSha:SHA,verifyNative:()=>false}),
+    assert.throws(()=>stageFromFixture(f,{sourceRoot:f.root,osSha:SHA,verifyNative:()=>false}),
       /existing provenance gate/);
     assert.equal(fs.existsSync(f.out),false);
   } finally {f.cleanup();}
@@ -93,7 +108,7 @@ test('fails closed on linked source files and Windows directory junctions',()=>{
       // Unprivileged Windows cannot create file symlinks; junctions still exercise linked-source rejection.
       fs.symlinkSync(native,join(f.root,'system','composition','shadow-native'),'junction');
     }
-    assert.throws(()=>stageStandalonePackage({sourceRoot:f.root,osSha:SHA,verifyNative:()=>true}),
+    assert.throws(()=>stageFromFixture(f,{sourceRoot:f.root,osSha:SHA,verifyNative:()=>true}),
       /linked/);
     assert.equal(fs.existsSync(f.out),false);
   } finally {f.cleanup();}
@@ -106,7 +121,7 @@ test('rejects duplicated resource destinations case-insensitively',()=>{
     config.build.extraResources.push({from:'../../docs/contracts/surface-source.json',
       to:'runtime-template/docs/contracts/SURFACE-source.json'});
     fs.writeFileSync(join(f.shell,'package.json'),JSON.stringify(config));
-    assert.throws(()=>stageStandalonePackage({sourceRoot:f.root,osSha:SHA,verifyNative:()=>true}),
+    assert.throws(()=>stageFromFixture(f,{sourceRoot:f.root,osSha:SHA,verifyNative:()=>true}),
       /Duplicate Desktop packaging target/);
   } finally {f.cleanup();}
 });
@@ -114,7 +129,7 @@ test('rejects duplicated resource destinations case-insensitively',()=>{
 test('detects staged byte tampering and extra files, with no modification of the installed product',()=>{
   const f=fixture();
   try {
-    stageStandalonePackage({sourceRoot:f.root,osSha:SHA,verifyNative:()=>true});
+    stageFromFixture(f,{sourceRoot:f.root,osSha:SHA,verifyNative:()=>true});
     const changed=join(f.out,'runtime-template/docs/contracts/surface-source.json');
     fs.rmSync(changed);
     fs.writeFileSync(changed,'altered');
@@ -131,7 +146,7 @@ test('rejects unknown exclusion patterns instead of silently copying extra OS fi
     const config=JSON.parse(fs.readFileSync(join(f.shell,'package.json'),'utf8'));
     config.build.extraResources[0].filter.push('!surface/runtime/**');
     fs.writeFileSync(join(f.shell,'package.json'),JSON.stringify(config));
-    assert.throws(()=>stageStandalonePackage({sourceRoot:f.root,osSha:SHA,verifyNative:()=>true}),
+    assert.throws(()=>stageFromFixture(f,{sourceRoot:f.root,osSha:SHA,verifyNative:()=>true}),
       /Unsupported Desktop packaging exclusion/);
   } finally {f.cleanup();}
 });
@@ -140,8 +155,8 @@ test('rejects unknown exclusion patterns instead of silently copying extra OS fi
 test('rejects a verified-but-different OS SHA instead of trusting the caller claim',()=>{
   const f=fixture();
   try {
-    assert.throws(()=>stageStandalonePackage({sourceRoot:f.root,osSha:'d'.repeat(40),verifyNative:()=>true}),
-      /not bound to requested OS SHA/);
+    assert.throws(()=>stageFromFixture(f,{sourceRoot:f.root,osSha:'d'.repeat(40),verifyNative:()=>true}),
+      /ordax-os source does not match pinned commit/);
   } finally {f.cleanup();}
 });
 
@@ -149,7 +164,7 @@ test('staged writes cannot mutate their canonical OS source',()=>{
   const f=fixture();
   try {
     const canonical = join(f.root,'system/composition/native/index.html');
-    stageStandalonePackage({sourceRoot:f.root,osSha:SHA,verifyNative:()=>true});
+    stageFromFixture(f,{sourceRoot:f.root,osSha:SHA,verifyNative:()=>true});
     const staged = join(f.out,'runtime-template/system/composition/native/index.html');
     assert.notEqual(fs.statSync(canonical).ino, fs.statSync(staged).ino,
       'standalone staging must not hardlink the OS source');
@@ -164,7 +179,7 @@ test('existing dangling output links cannot be overwritten',()=>{
   try {
     const external=join(f.root,'external');
     fs.symlinkSync(external,f.out,process.platform==='win32'?'junction':'dir');
-    assert.throws(()=>stageStandalonePackage({sourceRoot:f.root,osSha:SHA,verifyNative:()=>true}),
+    assert.throws(()=>stageFromFixture(f,{sourceRoot:f.root,osSha:SHA,verifyNative:()=>true}),
       /cannot be silently overwritten/);
     assert.equal(fs.existsSync(external),false);
   } finally { f.cleanup(); }
@@ -179,7 +194,7 @@ test('copied payload must pass the canonical Native verifier before export',()=>
       inspected.push([base,emittedRoot]);
       return emittedRoot===undefined; // source passes, copied payload fails
     };
-    assert.throws(()=>stageStandalonePackage({sourceRoot:f.root,osSha:SHA,verifyNative}),
+    assert.throws(()=>stageFromFixture(f,{sourceRoot:f.root,osSha:SHA,verifyNative}),
       /Copied Desktop Native bundle fails canonical OS\/Surface provenance/);
     assert.equal(inspected.length,2);
     assert.equal(inspected[0][0],f.root);
@@ -219,12 +234,15 @@ function detachedFixture(f) {
     assert.equal(r.status,0,r.stderr||'OS Git fixture failed');
     return r.stdout.trim();
   };
-  osGit('init','-q');
-  osGit('config','user.name','OrdaX OS Test');
-  osGit('config','user.email','ordax-os-fixture@invalid.example');
-  osGit('remote','add','origin','https://github.com/ordaxsystems/ordax-os.git');
-  osGit('add','.');
-  osGit('commit','-qm','Pinned canonical OS fixture');
+  if(!fs.existsSync(join(f.root,'.git'))){
+    osGit('init','-q');
+    osGit('config','user.name','OrdaX OS Test');
+    osGit('config','user.email','ordax-os-fixture@invalid.example');
+    osGit('remote','add','origin','https://github.com/ordaxsystems/ordax-os.git');
+  }
+  osGit('add','-A');
+  if(osGit('status','--porcelain')!=='')
+    osGit('commit','-qm','Pinned canonical OS fixture');
   const osSha=osGit('rev-parse','HEAD');
   const provenanceFile=join(f.root,'out','windows-desktop-native','source-provenance.json');
   const provenance=JSON.parse(fs.readFileSync(provenanceFile,'utf8'));
