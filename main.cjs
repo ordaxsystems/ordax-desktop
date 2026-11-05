@@ -506,7 +506,7 @@ app.on('before-quit',()=>{
   if(updateTimer){clearInterval(updateTimer);updateTimer=null;}
   if(activationTimer){clearInterval(activationTimer);activationTimer=null;}
   browserHost?.dispose();browserHost=null;
-  if(runtime?.child){stopHost(runtime.child);runtime=null;}
+  if(runtime?.child){stopHost(runtime.child,runtime.template);runtime=null;}
   stream?.end();stream=null;
 });
 app.on('window-all-closed',()=>app.quit());
@@ -656,7 +656,7 @@ app.whenReady().then(async()=>{
       if(!selected.trial)throw error;
       log('Desktop Dev candidate health failed; reverting to known-good: '+error.message);
       rejectCandidate(userData,selected.sha);
-      if(runtime?.child)stopHost(runtime.child);
+      if(runtime?.child)stopHost(runtime.child,runtime.template);
       runtime=null;
       const fallback=await chooseBootVersion({userData,template,log});
       root=fallback.root;
