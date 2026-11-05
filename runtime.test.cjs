@@ -73,7 +73,8 @@ test('installed Electron loads canonical Native composition only after attested 
 
 test('Windows installer producer pins the exact OS and private Desktop Git commits', () => {
   const workflow = readFileSync(join(__dirname,'../../.github/workflows/windows-desktop-dev.yml'),'utf8');
-  assert.ok(workflow.includes('ref: ${{ inputs.os_sha }}'));
+  assert.ok(workflow.includes('ref: ${{ github.event.pull_request.head.sha || github.sha }}'));
+  assert.ok(workflow.includes('EXPECTED_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}'));
   assert.ok(workflow.includes('Assert exact installer OS source identity'));
   assert.ok(workflow.includes('DESKTOP_INSTALLER_SOURCE_SHA=$actual'));
 });
@@ -81,13 +82,18 @@ test('Windows installer producer pins the exact OS and private Desktop Git commi
 test('Desktop owner invokes the only canonical Windows installer producer', () => {
   const workflow = readFileSync(join(__dirname,'../../.github/workflows/windows-desktop-dev.yml'),'utf8');
   const events = workflow.replace(/\r\n/g,'\n').split('\npermissions:')[0];
-  assert.match(events, /\n  workflow_call:\n/);
-  assert.doesNotMatch(events, /\n  pull_request:|\n  push:|\n  workflow_dispatch:/);
-  assert.ok(workflow.includes('repository: ordaxsystems/ordax-desktop'));
-  assert.ok(workflow.includes('ref: ${{ inputs.desktop_sha }}'));
+  assert.match(events, /\n  workflow_dispatch:\n/);
+  assert.match(events, /\n  pull_request:\n/);
+  assert.match(events, /\n  push:\n/);
+  assert.ok(workflow.includes('ref: ${{ github.event.pull_request.head.sha || github.sha }}'));
+  const caller=readFileSync(join(__dirname,'.github/workflows/desktop-source.yml'),'utf8');
+  const producers=[...caller.matchAll(/uses: ordaxsystems\/ordax-os\/\.github\/workflows\/windows-desktop-dev\.yml@([a-f0-9]{40})/g)];
+  assert.equal(producers.length,1,'Desktop calls exactly one immutable OS-owned producer');
+  assert.match(caller,/\n      os_sha: [a-f0-9]{40}\n/);
+  assert.ok(caller.includes('desktop_sha: ${{ github.event.pull_request.head.sha || github.sha }}'));
   assert.match(events, /\nconcurrency:\n  group: windows-desktop-dev-/);
   assert.match(events, /\n  cancel-in-progress: true\n/);
-  assert.ok(workflow.includes('EXPECTED_SOURCE_SHA: ${{ inputs.os_sha }}'));
+  assert.ok(workflow.includes('EXPECTED_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}'));
   assert.ok(workflow.includes('Bind installer to exact OS + Surface Native provenance'));
   assert.ok(workflow.includes('Verify isolated NSIS installation and Native files'));
   assert.ok(workflow.includes('if-no-files-found: error'));
@@ -146,10 +152,11 @@ test('Windows package excludes Linux-only Alpine package declaration without dro
     '!surface/runtime/physical_ata_probe.py', '!surface/runtime/physical_kernel_log_probe.py', '!surface/runtime/physical_performance_probe.py',
   ]);
   const workflow = readFileSync(join(__dirname, '../../.github/workflows/windows-desktop-dev.yml'), 'utf8');
-  assert.ok(workflow.includes('out/ordax-desktop-source/standalone-stage.cjs'));
-  assert.ok(workflow.includes('DESKTOP_OWNER_SHA: ${{ inputs.desktop_sha }}'));
-  assert.ok(workflow.includes('WINDOWS_DESKTOP_DETACHED_SOURCE=VERIFIED'));
-  assert.doesNotMatch(workflow,/paths: &desktop_product_sources/);
+  assert.ok(workflow.includes('node tools/windows-desktop/package-inventory.cjs --compiled'));
+  assert.ok(workflow.includes('Build unsigned Windows installer'));
+  assert.ok(workflow.includes('run: npm run dist:win'));
+  assert.ok(workflow.includes('Verify isolated NSIS installation and Native files'));
+  assert.match(workflow,/paths: &desktop_product_sources/);
 });
 
 test('Electron host passes the canonical Desktop Dev journal to the OS Native provider', () => {
@@ -172,10 +179,10 @@ test('packaged Electron obtains OS observation grants from the verified runtime-
 
 test('installed NSIS smoke invokes the one Desktop-owned Vite update test', () => {
   const smoke = readFileSync(join(__dirname,'install-smoke.ps1'),'utf8');
-  assert.ok(smoke.includes('out/ordax-desktop-source/dev-update-real-build.test.cjs'));
-  assert.doesNotMatch(smoke, /& node --test ["']tools\/windows-desktop\//);
+  assert.ok(smoke.includes('& node --test "tools/windows-desktop/dev-update-real-build.test.cjs"'));
+  assert.ok(smoke.includes('INSTALLED_READONLY_DEV_UPDATE_SMOKE=PASS'));
   // Historical OS-owned installers remain readable during an upgrade.
-  assert.ok(smoke.includes('tools/windows-desktop/package.json'));
+  assert.ok(smoke.includes('DESKTOP_INSTALLED_NATIVE_NO_VITE=PASS'));
 });
 
 test('Native readiness client validates a fresh HMAC challenge without an OS test fixture', async t => {

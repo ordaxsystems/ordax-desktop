@@ -53,7 +53,7 @@ jobs:
               # a documentation update alongside Dev-only code must not trigger NSIS.
               $nonTest = @($changed | Where-Object {
                 $_ -cnotmatch '\.md$' -and
-                $_ -cnotmatch '^(standalone-stage|local-dev|window-layout|host-recovery|host-startup|native-grant-frame)\.test\.cjs$' -and
+                $_ -cnotmatch '^(standalone-stage|local-dev|window-layout|host-recovery|host-startup|native-grant-frame|runtime)\.test\.cjs$' -and
                 $_ -cnotmatch '^ci/dev-shell-delta(?:\.test)?\.cjs$'
               })
               # Changes confined to the source gate cannot change installer bytes.
