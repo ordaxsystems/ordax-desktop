@@ -107,6 +107,15 @@ normal, candidato descartado e processos antigos não acionam recuperação.
 Isto não declara prontidão MCP nem equivale a reconexão remota atestada.
 A instalação operacional não deve ser reiniciada como parte dos testes de
 código: host-recovery.test.cjs cobre o observador e seus limites.
+### Proteção do frame principal da Surface
+
+Os grants Native da shell independente são associados ao frame principal
+verificado da Surface, à origem exata do loopback e ao documento atual.
+Um iframe da mesma página, inclusive hospedado na mesma origem, ou uma
+janela externa não herda File, Session, State, Aura ou Surface Report.
+Requisições durante transição de navegação ou sem frame válido falham
+fechadas. Os testes direcionados ficam em native-grant-frame.test.cjs.
+
 ### Grant da Surface para o Product Native
 
 Na shell independente, cada inicialização gera um `surfaceReportToken` próprio,
