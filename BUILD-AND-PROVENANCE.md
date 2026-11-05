@@ -31,6 +31,26 @@ quando há alteração de versão saudável, o marcador não-runtime é limpo.
 O diff Git precisa ser completo, delimitado por NUL e limitado em bytes;
 erros, truncamento e donos não previstos exigem validação normal.
 
+## Encerramento Native e Supervisor no owner correto
+
+O Electron deste repositório é dono do ciclo de vida da janela e da chamada
+`stopHost(child, template)`, não da política de encerramento de processos
+Windows. A árvore real do Native/Product é encerrada através do módulo
+**único** `ordax-os/system/adapters/desktop/owned-process-tree.cjs` contido
+na distribuição Native verificada. O fechamento espera o término da árvore
+antes de o Electron sair, evitando órfãos do Product Runtime. Uma revisão
+antiga sem esse módulo só pode sinalizar o PID filho exato, nunca procurar
+processos por nome. Filhos já encerrados nunca podem ser sinalizados.
+
+O launcher `dev:local` habilita o Supervisor Native existente somente no
+perfil de desenvolvimento, sem criar agente Electron ou contornar as
+autoridades Runtime/Platform. O smoke NSIS comprova que os módulos de
+Supervisor e os contratos de estado da Surface realmente acompanham o OS
+embutido. O histórico da migração não autoriza reimportar
+`tools/windows-desktop/` do repositório OS: alterações válidas daquela
+árvore precisam ser conciliadas neste owner antes da exclusão canônica pela
+PR `ordax-os#2403`.
+
 ## Único produtor
 
 A CI `.github/workflows/desktop-source.yml` valida este repositório e chama

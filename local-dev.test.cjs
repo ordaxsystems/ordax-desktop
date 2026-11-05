@@ -162,3 +162,10 @@ test('detached OS checkout refuses relative paths and incompatible Surface locks
     assert.equal(existsSync(join(f.root,'system/surface/ui')),false);
   }finally{f.cleanup()}
 });
+
+
+test('development launcher explicitly uses the canonical Native MCP supervisor without test-profile bypass',()=>{
+  const source=require('node:fs').readFileSync(join(__dirname,'local-dev.cjs'),'utf8');
+  assert.match(source,/ORDAX_DESKTOP_LOCAL_DEV:'1',ORDAX_DESKTOP_MCP_DEV:'1'/);
+  assert.doesNotMatch(source,/ORDAX_DESKTOP_MCP_DEV:'1'[^}]*ORDAX_DESKTOP_TEST_PROFILE/);
+});
