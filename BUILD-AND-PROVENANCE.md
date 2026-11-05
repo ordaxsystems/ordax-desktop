@@ -9,6 +9,29 @@
 - **Runtime MCP / Capability Fabric:** seus respectivos owners; nenhuma
   implementação é copiada para o Electron.
 
+## Estado integrado e staging com owner único (05/11/2026)
+
+As PRs Desktop [#6](https://github.com/ordaxsystems/ordax-desktop/pull/6),
+[#7](https://github.com/ordaxsystems/ordax-desktop/pull/7) e
+[#8](https://github.com/ordaxsystems/ordax-desktop/pull/8) estão integradas;
+os gates Windows/NSIS mais recentes estão verdes. A instalação canônica no
+Windows físico recebeu o delta transacional da PR #7 e comprovou boot da
+Surface, encerramento completo do filho Native e relançamento saudável.
+
+`standalone-stage.cjs` aceita **somente** a composição com dois checkouts Git
+exatos, limpos e identificados: `--os-root`/`os_sha` para os serviços Native e
+`--desktop-root`/`desktop_sha` para a shell Electron. O modo de um argumento
+que obtinha o Electron de `ordax-os/tools/windows-desktop` foi removido.
+`verifyStandaloneStage` recusa recibo sem `desktop_owner` e
+`desktop_sha`, ou que declare `ordax-os` como proprietário da shell.
+Os paths relativos dos recursos continuam resolvidos contra um **anchor
+virtual** na hierarquia OS — sem pasta/implementação Electron correspondente.
+
+O único uso permitido de recibos OS-owned antigos é a prova histórica de
+upgrade/rollback em `ci/windows-cross-version-smoke.ps1`; jamais o produtor
+ou o smoke NSIS de novos artefatos. A exclusão da árvore legada da `main`
+do OS é responsabilidade da PR `ordax-os#2403`, não deste repositório.
+
 ## Atualização Dev por impacto real
 
 O materializador Git de `dev-update.cjs` é o **único owner Windows**
@@ -89,7 +112,7 @@ A CI mais recente do Desktop antes do novo pin, [#41934791675](https://github.co
 passou para `desktop_sha=249306fa`, mas ainda empacotava o `os_sha` antigo.
 A entrega com o novo `os_sha` só é homologada após CI e smoke NSIS próprios.
 
-**Gate pendente (04/11/2026, 21h34 BRT):** a CI
+**Histórico de gate posteriormente resolvido (04/11/2026, 21h34 BRT):** a CI
 [#41939483362](https://github.com/ordaxsystems/ordax-desktop/actions/runs/41939483362)
 tentou o NSIS com `os_sha=4916cf91`, mas falhou nos testes de contrato da
 fonte Desktop. A [PR #5](https://github.com/ordaxsystems/ordax-desktop/pull/5)
@@ -104,9 +127,12 @@ smoke canônico do Desktop chame a prova já existente em
 `out/ordax-desktop-source/dev-update-real-build.test.cjs`.
 A correção mantém o mesmo teste físico read-only e verifica uma invocação
 única, sem reinstalar agentes, duplicar código nem dispensar a verificação.
-Esse par de SHAs ainda **não tem homologação de instalador** até o novo
-`workflow_dispatch` oficial passar no job NSIS. O acionamento manual,
-sem alteração de código do produto, evita builds desnecessários.
+Essa tentativa histórica foi superada pelas CIs
+[#42029571439](https://github.com/ordaxsystems/ordax-desktop/actions/runs/42029571439)
+e [#42036239479](https://github.com/ordaxsystems/ordax-desktop/actions/runs/42036239479),
+ambas aprovadas nos dois gates de fonte e instalador NSIS. A homologação
+física da atualização Dev e do encerramento da árvore Native está registrada
+na PR Desktop #7. O canal continua **Dev unsigned**, não Stable.
 
 **Bloqueio independente do Product:** a
 [issue Runtime #327](https://github.com/ordaxsystems/ordax-runtime/issues/327)
