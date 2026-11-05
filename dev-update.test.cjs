@@ -507,6 +507,29 @@ test('unknown paths and Native source changes cannot hide behind unrelated docum
   }
 });
 
+test('large Git diff cannot hide an unknown runtime owner behind truncated stdout',async t=>{
+  const f=fixture(t);
+  installVerifiedBundledFixture(f,f.first);
+  mkdirSync(join(f.source,'a-new-runtime-owner'),{recursive:true});
+  writeFileSync(join(f.source,'a-new-runtime-owner','new-native-contract.json'),'unknown owner input');
+  mkdirSync(join(f.source,'docs'),{recursive:true});
+  for(let i=0;i<45;i++){
+    writeFileSync(join(f.source,'docs','unrelated-review-documentation-'+String(i).padStart(3,'0')+'.md'),
+      'unrelated documentation');
+  }
+  gitCli(['add','.'],f.source);gitCli(['commit','-qm','mixed large docs plus new owner'],f.source);
+  let maxOutput=null,builds=0;
+  const runGit=async(...args)=>{
+    if(args[0].includes('diff'))maxOutput=args[3];
+    return f.offlineGit(...args);
+  };
+  const result=await stageMain({userData:f.userData,template:f.template,runGit,
+    buildCandidate:async(...args)=>{builds++;return f.offlineBuild(...args);}});
+  assert.equal(maxOutput,65536,'the full ownership diff must not be clipped to diagnostic 1 KB');
+  assert.equal(result.status,'staged');
+  assert.equal(builds,1,'an unknown source owner cannot be skipped by a truncated path list');
+});
+
 test('stale incompatible marker can be retired only by exact verified bundled main',async t=>{
   const f=fixture(t);
   const assets=installVerifiedBundledFixture(f,f.first);
