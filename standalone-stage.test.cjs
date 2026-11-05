@@ -381,3 +381,31 @@ test('detached package rejects staged bytes changed after Git attestation',()=>{
     assert.equal(fs.existsSync(f.out),false);
   }finally{fs.copyFileSync=originalCopy;d.cleanup();f.cleanup();}
 });
+
+test('operational NSIS install retires only a superseded Desktop Dev shell delta receipt',()=>{
+  const source=fs.readFileSync(join(__dirname,'installer.nsh'),'utf8');
+  const body=source.match(/!macro customInstall\r?\n([\s\S]*?)\r?\n!macroend/)?.[1];
+  assert.ok(body,'canonical NSIS install hook is required');
+  const guards=[
+    'StrCmp "$INSTDIR" "$LOCALAPPDATA\\Programs\\OrdaX OS Desktop Dev" 0 ordax_nsis_delta_done',
+    'IfFileExists "$INSTDIR\\resources\\app.asar" 0 ordax_nsis_delta_done',
+    'IfFileExists "$INSTDIR\\resources\\app.asar.delta-rollback" ordax_nsis_delta_done 0',
+    'IfFileExists "$INSTDIR\\resources\\app.asar.delta-ready" ordax_nsis_delta_done 0',
+    'IfFileExists "$APPDATA\\OrdaX OS Desktop Dev\\desktop-shell-delta-receipt.json.tmp" ordax_nsis_delta_done 0',
+    'IfFileExists "$APPDATA\\OrdaX OS Desktop Dev\\desktop-shell-delta-receipt.json" 0 ordax_nsis_delta_done',
+  ];
+  let preceding=body.indexOf('install-files-complete');
+  assert.ok(preceding>=0,'cleanup must follow the installed-files stage');
+  for(const guard of guards){
+    const next=body.indexOf(guard);
+    assert.ok(next>preceding,'expected guard after previous stage: '+guard);
+    preceding=next;
+  }
+  const mutation='Delete "$APPDATA\\OrdaX OS Desktop Dev\\desktop-shell-delta-receipt.json"';
+  const at=body.indexOf(mutation);
+  assert.ok(at>preceding,'receipt cleanup must follow every fail-closed guard');
+  assert.match(body.slice(at),/ordax_nsis_delta_done:/);
+  assert.equal((body.match(/^\s*Delete /gm)||[]).length,1,
+    'do not delete profiles, grants, Runtime state or rollback evidence');
+  assert.doesNotMatch(body,/RMDir|desktop-dev-update-state\.json|agent-settings\.json/);
+});

@@ -91,6 +91,25 @@ execução confiável com o Desktop fechado conclui essa limpeza. Se o backup
 estiver ausente ou corrompido durante uma falha de saúde, a shell atual não é
 apagada sem uma cópia íntegra verificada. `--verify` permanece somente leitura.
 
+### NSIS substitui a shell Dev
+
+Quando o instalador NSIS oficial **conclui a extração** na instalação
+operacional única `%LOCALAPPDATA%\Programs\OrdaX OS Desktop Dev`, ele
+invalida somente o recibo de delta da shell anterior, pois o ASAR foi
+substituído pelo instalador. O hook existente `customInstall` verifica o
+destino canônico e o ASAR instalado; instalações isoladas de smoke não
+tocam o perfil real. Se houver `.delta-rollback`, `.delta-ready` ou recibo
+`.tmp`, o NSIS preserva os arquivos e a próxima atualização Dev continua
+fail-closed. Não apaga estado Native, enrollment, grants ou perfis.
+
+**Instalações NSIS antigas não recebem essa correção retroativamente.** Se
+um NSIS antigo substituiu o ASAR deixando um recibo de delta divergente,
+`--verify`/`--install` bloqueiam por integridade: não apagar nem editar o
+recibo manualmente, e não substituir módulos isolados. A reconciliação se
+dá somente por uma entrega NSIS canônica que contenha o hook corrigido e
+passe os gates físicos aplicáveis; o delta volta a operar sobre a nova
+base instalada.
+
 ### Recuperação do host Native após uma falha
 
 O Electron monitora a saída inesperada **do processo Native já homologado**.
