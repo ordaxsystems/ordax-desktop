@@ -12,6 +12,7 @@ const { readDesktopWindowLayout,desktopMinimumWindowSize,
   reconcileDesktopWindowDisplayChange,
   createDesktopWindowLayoutPersistence } = require('./window-layout.cjs');
 const { verifyBundledNativeReceipt } = require('./native-build.cjs');
+const { isTrustedNativeRequest } = require('./native-grant-frame.cjs');
 let window=null, runtime=null, stream=null, browserHost=null, updateTimer=null, activationTimer=null, staging=false, idleActivation=null;
 let quitting=false,disarmNativeHostExit=null;
 const HOST_RECOVERY_ARG='--ordax-native-host-recovery-once';
@@ -138,9 +139,9 @@ function authorizeDesktopFileRequests(browserWindow,base,fileToken,localSessionT
   const { OBSERVATION_ROUTES }=require(join(template,'system','adapters',
     'desktop','observation-grant.cjs'));
   const permittedOrigin=new URL(base).origin;
-  // The secret never enters the renderer or a browser cookie. Only requests
-  // from this trusted Surface's WebContents receive it; external Chromium
-  // tabs never inherit the native file capability.
+  // The secret never enters the renderer or a browser cookie. Only the
+  // canonical main frame of the verified Surface receives any native grant:
+  // same-WebContents iframes and external Chromium tabs are not principals.
   browserWindow.webContents.session.webRequest.onBeforeSendHeaders(
     {urls:['http://127.0.0.1/*']},
     (details,callback)=>{
@@ -152,8 +153,12 @@ function authorizeDesktopFileRequests(browserWindow,base,fileToken,localSessionT
       }
       try {
         const target=new URL(details.url);
-        const trusted=details.webContentsId===browserWindow.webContents.id &&
-          target.origin===permittedOrigin;
+        const trusted=isTrustedNativeRequest({
+          details,contentsId:browserWindow.webContents.id,
+          mainFrame:browserWindow.webContents.mainFrame,
+          activeUrl:browserWindow.webContents.getURL(),
+          allowedOrigin:permittedOrigin,
+        });
         if(trusted && FILE_ROUTES.has(target.pathname))headers['X-OrdaX-File-Token']=fileToken;
         if(trusted && target.pathname==='/__ordax/native/local-session')
           headers['X-OrdaX-Local-Session-Token']=localSessionToken;
