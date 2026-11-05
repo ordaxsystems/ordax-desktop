@@ -18,7 +18,7 @@ const VERSIONS_DIR = 'runtime-versions';
 const DEFAULT_STATE = Object.freeze({
   schema: CHANNEL_SCHEMA, activeSha: null, previousSha: null,
   pendingSha: null, attemptedSha: null, pinnedSha: null, rejectedSha: null,
-  incompatibleSha: null,
+  incompatibleSha: null, nonRuntimeMainSha: null,
 });
 
 function shaOrNull(value) {
@@ -29,7 +29,8 @@ function validateState(value) {
       value.schema !== CHANNEL_SCHEMA ||
       !['activeSha','previousSha','pendingSha','attemptedSha','pinnedSha','rejectedSha'].every(
         field => shaOrNull(value[field])
-      ) || !shaOrNull(value.incompatibleSha ?? null)) {
+      ) || !shaOrNull(value.incompatibleSha ?? null) ||
+      !shaOrNull(value.nonRuntimeMainSha ?? null)) {
     throw Error('Untrusted Desktop Dev update state; refusing update');
   }
   if (value.pinnedSha && value.pinnedSha !== value.activeSha) {
@@ -48,6 +49,9 @@ function validateState(value) {
     pinnedSha: value.pinnedSha, rejectedSha: value.rejectedSha,
     // A previously persisted v1 state may not have this optional field.
     incompatibleSha: value.incompatibleSha ?? null,
+    // Receipt for official main whose exact Git diff had no Native runtime
+    // inputs. This is NOT an activated version and never replaces activeSha.
+    nonRuntimeMainSha: value.nonRuntimeMainSha ?? null,
   });
 }
 function statePath(userData) { return join(userData, STATE_FILENAME); }
@@ -258,7 +262,7 @@ function confirmHealthy(userData, sha) {
     throw Error('Desktop candidate health does not match the attempted commit');
   }
   return writeState(userData,{...state,activeSha:sha,previousSha:state.activeSha,
-    pendingSha:null,attemptedSha:null,rejectedSha:null});
+    pendingSha:null,attemptedSha:null,rejectedSha:null,nonRuntimeMainSha:null});
 }
 function rejectCandidate(userData, sha) {
   const state = readState(userData);
@@ -274,11 +278,37 @@ async function pinPrevious(userData,template) {
   }
   return writeState(userData,{...state,activeSha:state.previousSha,
     previousSha:state.activeSha, pendingSha:null,attemptedSha:null,
-    pinnedSha:state.previousSha});
+    pinnedSha:state.previousSha,nonRuntimeMainSha:null});
 }
 function unpin(userData) {
   const state = readState(userData);
   return writeState(userData,{...state,pinnedSha:null});
+}
+
+// The Desktop source graph is smaller than the full OS repository. Only
+// paths that cannot affect the installed Native tree, its input contracts,
+// release evidence, emulator and Web bridge may skip a rebuild. This is
+// intentionally an allowlist: unknown additions and mixed changes compile.
+// Do not reuse the Creator/USB impact classifier as a Desktop authority.
+function isNonRuntimeSourcePath(path) {
+  if (typeof path !== 'string' || !path || path.startsWith('/') ||
+      path.includes('\\') || path.includes('..')) return false;
+  if (path === 'README.md' || path === 'AGENTS.md' ||
+      path === 'bootstrap/dev-base/ordax-pull') return true;
+  if (path.startsWith('docs/') &&
+      !path.startsWith('docs/contracts/') &&
+      !path.startsWith('docs/evidence/')) return true;
+  return path.startsWith('tests/') || path.startsWith('tools/ci/') ||
+    path.startsWith('.github/');
+}
+
+function onlyNonRuntimeChanges(diff) {
+  // Git -z output must terminate each name with NUL. No Git quoting,
+  // rename heuristic, or newline-splitting can silently drop an owner.
+  if (typeof diff !== 'string' || diff.length > 65536 || !diff.endsWith('\0'))
+    return false;
+  const paths=diff.slice(0,-1).split('\0');
+  return paths.length <= 512 && paths.every(isNonRuntimeSourcePath);
 }
 
 // Owner/Development Git-main (ordax-pull) can prepare a new Native tree
@@ -400,6 +430,18 @@ async function stageMain({ userData, template, log = () => {}, remote = OFFICIAL
   // through repeated cloning of the identical official SHA.
   if (remoteSha === state.incompatibleSha) return {status:'incompatible',sha:remoteSha};
 
+  // Persisted only after validating the exact official Git source diff.
+  // When the same main SHA is polled again, do not clone or compile it.
+  // A lost/corrupt active version must NOT be hidden behind this receipt.
+  if (remoteSha === state.nonRuntimeMainSha) {
+    const trustedBaseline=state.activeSha
+      ? await verifiedVersion(userData,state.activeSha,template)
+      : verifiedBundledSourceSha(template);
+    if (trustedBaseline) {
+      return {status:'no-runtime-change',sha:remoteSha};
+    }
+  }
+
   const versions = join(userData,VERSIONS_DIR);
   mkdirSync(versions,{recursive:true});
   const existing = await verifiedVersion(userData,remoteSha,template);
@@ -435,10 +477,40 @@ async function stageMain({ userData, template, log = () => {}, remote = OFFICIAL
         log('Official main '+remoteSha.slice(0,12)+' lacks Desktop Host contract; deferring until main changes');
         return {status:'incompatible',sha:remoteSha};
       }
+      // A verified active Git build or immutable bundled source is the only
+      // valid comparison baseline. It must be an ancestor of official main.
+      const baseline=state.activeSha || verifiedBundledSourceSha(template);
       if (state.activeSha) {
         const ancestry = await runGit(['-C',staging,'merge-base','--is-ancestor',
           state.activeSha,remoteSha],staging,10000);
         if (!ancestry.ok) return {status:'diverged'};
+      }
+      if (baseline) {
+        const baselineValid=state.activeSha
+          ? Boolean(await verifiedVersion(userData,state.activeSha,template))
+          : true; // verifiedBundledSourceSha already checks receipt + bytes
+        if (baselineValid) {
+          const ancestor = await runGit(['-C',staging,'merge-base','--is-ancestor',
+            baseline,remoteSha],staging,10000);
+          if (ancestor.ok) {
+            const changed = await runGit(['-C',staging,'diff','--no-renames',
+              '--name-only','-z',baseline,remoteSha],staging,15000);
+            if (changed.ok && onlyNonRuntimeChanges(changed.stdout)) {
+              // Recheck after I/O; never overwrite a concurrent promotion,
+              // rollback pin, rejection or pending candidate.
+              const latest=readState(userData);
+              if (!latest.pendingSha && !latest.pinnedSha &&
+                  latest.activeSha===state.activeSha &&
+                  latest.rejectedSha===state.rejectedSha &&
+                  latest.incompatibleSha===state.incompatibleSha) {
+                writeState(userData,{...latest,nonRuntimeMainSha:remoteSha});
+                log('Desktop Dev official main has no new Native runtime inputs: '+remoteSha.slice(0,12));
+                return {status:'no-runtime-change',sha:remoteSha};
+              }
+              return {status:'conflict'};
+            }
+          }
+        }
       }
       const target = versionRoot(userData,remoteSha);
       if (existsSync(target)) return {status:'conflict'};
@@ -480,7 +552,8 @@ async function stageMain({ userData, template, log = () => {}, remote = OFFICIAL
   if (latest.pinnedSha || latest.pendingSha || latest.activeSha !== state.activeSha) {
     return {status:'conflict'};
   }
-  writeState(userData,{...latest,pendingSha:remoteSha,attemptedSha:null,incompatibleSha:null});
+  writeState(userData,{...latest,pendingSha:remoteSha,attemptedSha:null,
+    incompatibleSha:null,nonRuntimeMainSha:null});
   log('Validated Desktop Dev update ' + remoteSha.slice(0,12) +
       ' staged; activation requires next app start and health receipt');
   return {status:'staged',sha:remoteSha};
