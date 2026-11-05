@@ -54,10 +54,17 @@ fonte Desktop. A [PR #5](https://github.com/ordaxsystems/ordax-desktop/pull/5)
 reconciliou esses testes; a CI
 [#41942309250](https://github.com/ordaxsystems/ordax-desktop/actions/runs/41942309250)
 passou na validação de fonte, **mas dispensou o job NSIS** por impacto.
-Logo, esse par de SHAs ainda **não tem homologação de instalador**. A próxima
-validação aplicável é uma única execução oficial `workflow_dispatch` do
-`Desktop Source Contracts` na `main`, que obriga o job NSIS; não repetir
-builds anteriores nem presumir sucesso pelos testes de fonte.
+A execução manual oficial [#41946874405](https://github.com/ordaxsystems/ordax-desktop/actions/runs/41946874405)
+executou o gate NSIS com o pin Native correto, mas parou no teste de fonte
+`runtime.test.cjs`: a expectativa textual ainda apontava para o caminho antigo
+`tools/windows-desktop/dev-update-real-build.test.cjs`, embora o **único**
+smoke canônico do Desktop chame a prova já existente em
+`out/ordax-desktop-source/dev-update-real-build.test.cjs`.
+A correção mantém o mesmo teste físico read-only e verifica uma invocação
+única, sem reinstalar agentes, duplicar código nem dispensar a verificação.
+Esse par de SHAs ainda **não tem homologação de instalador** até o novo
+`workflow_dispatch` oficial passar no job NSIS. O acionamento manual,
+sem alteração de código do produto, evita builds desnecessários.
 
 **Bloqueio independente do Product:** a
 [issue Runtime #327](https://github.com/ordaxsystems/ordax-runtime/issues/327)
