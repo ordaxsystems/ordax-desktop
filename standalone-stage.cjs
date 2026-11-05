@@ -302,7 +302,7 @@ function verifyStandaloneStage(stageRoot) {
       !SHA40.test(manifest.desktop_sha) ||
       manifest.source_authority !== 'ordaxsystems/ordax-desktop/package.json' ||
       manifest.runtime_owner !== 'ordaxsystems/ordax-os' ||
-      manifest.product_owner !== 'ordaxsystems/ordax-desktop'
+      manifest.product_owner !== 'ordaxsystems/ordax-desktop')
     throw Error('Invalid standalone stage manifest');
   const targets = new Set();
   let bytes = 0;
