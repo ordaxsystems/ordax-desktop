@@ -3,10 +3,20 @@ const test=require('node:test');
 const assert=require('node:assert/strict');
 const http=require('node:http');
 const {isReady,freePort,startHost,stopHost}=require('./host.cjs');
-const {mkdtempSync,mkdirSync,writeFileSync,rmSync}=require('node:fs');
+const {mkdtempSync,mkdirSync,writeFileSync,readFileSync,rmSync}=require('node:fs');
 const {join}=require('node:path');
 const {tmpdir}=require('node:os');
 
+
+test('installed Desktop awaits its splash navigation before Native host startup',()=>{
+  const source=readFileSync(join(__dirname,'main.cjs'),'utf8');
+  assert.match(source,/const navigation=window\.loadURL\('data:text\/html/);
+  assert.match(source,/navigation\.catch\(error=>log\(/);
+  const awaitedSplash=source.indexOf("await status('Iniciando a Surface Native compartilhada...')");
+  const nativeStart=source.indexOf('runtime=await startHost(',awaitedSplash);
+  assert.ok(awaitedSplash>0&&nativeStart>awaitedSplash,
+    'Native navigation must not cancel an unresolved splash load');
+});
 test('cold Native HTTP probe waits for delayed but valid response rather than canceling after 1.2 seconds',async t=>{
   const server=http.createServer((request,response)=>{
     assert.equal(request.url,'/system/composition/native/index.html');
