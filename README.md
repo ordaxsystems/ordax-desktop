@@ -17,7 +17,7 @@ histórica; não autoriza uma segunda implementação.
 
 A CI privada `Desktop Source Contracts` valida a fonte e chama um **único**
 produtor Windows do `ordax-os`, pinado por commit exato
-`3e7c907b11199c5a7e55f54df57268836f0c3eb5`. O OS continua autoridade dos recursos Native e do lock da Surface;
+`3bafa3d1e25f644cf089cce1444e1f85c53c2c4b`. O OS continua autoridade dos recursos Native e do lock da Surface;
 o Electron é obtido exclusivamente deste repositório. A proveniência instalada
 registra ambos os SHAs.
 
@@ -40,3 +40,8 @@ profile and restores them within the available display work areas. Hot-unplug,
 RDP and display-metric changes recover windows that would otherwise be offscreen.
 This functionality lives in `window-layout.cjs`, not in OS Native or Surface.
 Run `node --test window-layout.test.cjs` for its focused regression tests.
+
+A revisão de empacotamento Windows `0.1.0-alpha.21` consome a fonte Native
+`ordax-os@3bafa3d1e25f644cf089cce1444e1f85c53c2c4b` (inclui a probation da Calculadora e o
+corte do Electron duplicado). O shell continua em `ordax-desktop`, e o
+NSIS Dev segue unsigned; nenhuma instalação física ou trust é inferida da CI.

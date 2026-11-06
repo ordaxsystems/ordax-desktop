@@ -79,10 +79,10 @@ PR `ordax-os#2403`.
 A CI `.github/workflows/desktop-source.yml` valida este repositório e chama
 o workflow reutilizável do OS
 `ordax-os/.github/workflows/windows-desktop-dev.yml`, com a interface
-`workflow_call` fixada em `3e7c907b11199c5a7e55f54df57268836f0c3eb5`.
+`workflow_call` fixada em `3bafa3d1e25f644cf089cce1444e1f85c53c2c4b`.
 Essa referência é a versão compatível do produtor reutilizável, **não** a
 revisão Native empacotada: `os_sha` aponta separadamente para
-`352782a04c0ea48e33df139199e80898532d60d0` (OS main com Surface #93), e `desktop_sha` para o
+`3bafa3d1e25f644cf089cce1444e1f85c53c2c4b` (OS main com Surface #93), e `desktop_sha` para o
 commit exato deste repositório. A versão atual do workflow do OS não
 expõe `workflow_call`; apontar `uses` diretamente para ela quebraria a CI.
 Atualizar `os_sha` exige nova prova NSIS, sem criar outro produtor.
@@ -158,3 +158,13 @@ permanece no histórico Git, sem código de extração paralelo.
 ## Prova de atualização entre instaladores
 
 O workflow manual `.github/workflows/desktop-cross-version-proof.yml` é **somente de validação**. Ele baixa os artefatos NSIS já compilados dos runs históricos do OS e do novo Desktop, exige ambos SHAs Git e os SHA-256 dos executáveis, e testa em runner Windows descartável: instalação do OS antigo → upgrade para Desktop → rollback. Não existe outro produtor, não há rebuild, nem execução no desktop pessoal. O teste falha fechado se não puder ler o artefato histórico ou verificar sua proveniência; não troca certificados nem publica Stable.
+
+## MVP Windows — atualização da Calculadora e corte do Electron (06/11/2026)
+
+O NSIS `0.1.0-alpha.21` empacota `ordax-os@3bafa3d1e25f644cf089cce1444e1f85c53c2c4b`, incluindo
+as PRs #2443 (probation/health da Calculadora) e #2403 (fonte Electron única).
+O produtor canônico reutilizável permanece em `.github/workflows/windows-desktop-dev.yml`
+do OS, fixado por SHA exato; os bytes do shell são os desta revisão
+`ordax-desktop`, atestados separadamente. `ordax-surface` continua fixada
+pelo lock oficial do OS. A CI Windows prova instalação isolada, não uso no
+Desktop físico nem autorização para instalar/ativar componentes unsigned.

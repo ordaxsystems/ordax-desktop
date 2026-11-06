@@ -74,6 +74,23 @@ jobs:
               $required = $nonTest.Count -gt 0
             }
           }
+          # The exact alpha.21 bytes already passed this NSIS and isolated
+          # installation gate in run 42244971203. Reuse is allowed ONLY when
+          # all changed files since its release commit are CI policy itself;
+          # an independent verified-release step below must still succeed.
+          $releasedCommit = 'e616595892fc27b9cdce495ea5290b088c933136'
+          $reuse = $false
+          if ($env:EVENT_NAME -in @('pull_request','push') -and
+              $env:HEAD_SHA -cmatch '^[a-f0-9]{40}$') {
+            $sinceRelease = @(& git diff --name-only --no-renames $releasedCommit $env:HEAD_SHA)
+            if ($LASTEXITCODE -eq 0 -and $sinceRelease.Count -eq 1 -and
+                $sinceRelease[0] -ceq '.github/workflows/desktop-source.yml') {
+              $reuse = $true
+              $required = $false
+            }
+          }
+          "reuse=$($reuse.ToString().ToLowerInvariant())" |
+            Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
           "required=$($required.ToString().ToLowerInvariant())" |
             Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
           Write-Output "DESKTOP_NSIS_REQUIRED=$($required.ToString().ToUpperInvariant())"
@@ -121,6 +138,72 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Detached Windows source regression failed' }
           & node --test ci/dev-shell-delta.test.cjs
           if ($LASTEXITCODE -ne 0) { throw 'Desktop Dev shell delta regression failed' }
+      - name: Attest already-published alpha.21 NSIS (no rebuild)
+        if: steps.impact.outputs.reuse == 'true'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_COMPARE_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $releaseSha = 'e616595892fc27b9cdce495ea5290b088c933136'
+          $tag = 'desktop-dev-v0.1.0-alpha.21-e616595892fc'
+          $repo = $env:GITHUB_REPOSITORY
+          if ($repo -cne 'ordaxsystems/ordax-desktop') { throw 'Incorrect release owner' }
+          $changed = @(& git diff --name-only --no-renames $releaseSha $env:RELEASE_COMPARE_HEAD)
+          if ($LASTEXITCODE -ne 0 -or $changed.Count -ne 1 -or
+              $changed[0] -cne '.github/workflows/desktop-source.yml') {
+            throw 'Packaged Desktop source differs from the published NSIS'
+          }
+          $workflow = Get-Content '.github/workflows/desktop-source.yml' -Raw
+          if (-not $workflow.Contains('      os_sha: 3bafa3d1e25f644cf089cce1444e1f85c53c2c4b') -or
+              -not $workflow.Contains('      publish_dev_release: true')) {
+            throw 'Installer OS or release mode changed after publication'
+          }
+          $release = (& gh api "repos/$repo/releases/tags/$tag" | ConvertFrom-Json)
+          if ($LASTEXITCODE -ne 0 -or $release.id -ne 436689504 -or
+              $release.draft -or -not $release.prerelease -or
+              $release.target_commitish -cne $releaseSha) {
+            throw 'Canonical published Dev Release identity mismatch'
+          }
+          $ref = (& gh api "repos/$repo/git/ref/tags/$tag" | ConvertFrom-Json)
+          if ($LASTEXITCODE -ne 0 -or $ref.object.type -cne 'commit' -or
+              $ref.object.sha -cne $releaseSha) { throw 'Published tag source mismatch' }
+          $expected = @{
+            'OrdaX-OS-Desktop-Dev-0.1.0-alpha.21-x64.exe' = 'sha256:5a665760be67f7963bdbf760e84c3c4432a693455e30fd8d51589c3df0c0ccce'
+            'OrdaX-OS-Desktop-Dev-0.1.0-alpha.21-x64.exe.sha256' = 'sha256:446241b3419161a79075a6dd05516c64738012964e56d46f9b3e0f8f60dcb650'
+            'OrdaX-OS-Desktop-Dev-0.1.0-alpha.21-x64.exe.provenance.json' = 'sha256:7d71689836304e02037fa4a806507efb61b394b9a2a4b421d96ccaa9312887a0'
+          }
+          if (@($release.assets).Count -ne 3) { throw 'Unexpected Dev Release asset inventory' }
+          foreach ($asset in @($release.assets)) {
+            if (-not $expected.ContainsKey($asset.name) -or
+                $asset.state -cne 'uploaded' -or
+                $asset.digest -cne $expected[$asset.name]) {
+              throw "Untrusted Release asset: $($asset.name)"
+            }
+          }
+          $exe = @($release.assets | Where-Object { $_.name -ceq 'OrdaX-OS-Desktop-Dev-0.1.0-alpha.21-x64.exe' })
+          if ($exe.Count -ne 1 -or $exe[0].size -ne 680363736) { throw 'Installer size mismatch' }
+          $dir = Join-Path $env:RUNNER_TEMP 'ordax-verified-dev-release'
+          New-Item -ItemType Directory -Path $dir -Force | Out-Null
+          & gh release download $tag -R $repo --dir $dir --pattern '*.sha256' --pattern '*.provenance.json'
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot download release proof files' }
+          $checksum = Get-Item (Join-Path $dir 'OrdaX-OS-Desktop-Dev-0.1.0-alpha.21-x64.exe.sha256')
+          $provenanceFile = Get-Item (Join-Path $dir 'OrdaX-OS-Desktop-Dev-0.1.0-alpha.21-x64.exe.provenance.json')
+          if (('sha256:' + (Get-FileHash $checksum.FullName -Algorithm SHA256).Hash.ToLowerInvariant()) -cne $expected[$checksum.Name] -or
+              ('sha256:' + (Get-FileHash $provenanceFile.FullName -Algorithm SHA256).Hash.ToLowerInvariant()) -cne $expected[$provenanceFile.Name]) {
+            throw 'Downloaded release proof digest mismatch'
+          }
+          if ((Get-Content $checksum.FullName -Raw).Trim() -cne ('5a665760be67f7963bdbf760e84c3c4432a693455e30fd8d51589c3df0c0ccce  OrdaX-OS-Desktop-Dev-0.1.0-alpha.21-x64.exe')) {
+            throw 'Installer checksum file mismatch'
+          }
+          $p = Get-Content $provenanceFile.FullName -Raw | ConvertFrom-Json
+          if ($p.desktop_source_commit -cne $releaseSha -or $p.os_source_commit -cne '3bafa3d1e25f644cf089cce1444e1f85c53c2c4b' -or
+              $p.surface_source_commit -cne 'fb0092b1e2139741a456340ad56854338b671186' -or $p.sha256 -cne '5a665760be67f7963bdbf760e84c3c4432a693455e30fd8d51589c3df0c0ccce' -or
+              $p.size_bytes -ne 680363736 -or $p.unsigned -ne $true -or
+              $p.channel -cne 'development') { throw 'Runtime provenance attestation failed' }
+          Write-Output 'ORDAX_EXISTING_NSIS_RELEASE_ATTESTATION=PASS'
+          Write-Output "VERIFIED_NSIS_SOURCE=$releaseSha RELEASE=$($release.html_url)"
   # One compiler and one NSIS gate for product-affecting changes only.
   # Test-only changes still pass source contracts but do not rebuild identical
   # Electron/Native bytes. Unknown impact and manual dispatch fail closed.
@@ -128,9 +211,10 @@ jobs:
     name: Canonical Windows installer (detached Desktop + OS)
     needs: windows-source
     if: needs.windows-source.outputs.installer_required == 'true'
-    uses: ordaxsystems/ordax-os/.github/workflows/windows-desktop-dev.yml@3e7c907b11199c5a7e55f54df57268836f0c3eb5
+    uses: ordaxsystems/ordax-os/.github/workflows/windows-desktop-dev.yml@1c83a70813957d865b13e95790f2e16b0293bfb1
     with:
-      os_sha: 352782a04c0ea48e33df139199e80898532d60d0
+      os_sha: 3bafa3d1e25f644cf089cce1444e1f85c53c2c4b
       desktop_sha: ${{ github.event.pull_request.head.sha || github.sha }}
+      publish_dev_release: true
     permissions:
-      contents: read
+      contents: write
