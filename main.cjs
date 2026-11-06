@@ -49,11 +49,16 @@ function log(message) {
   process.stderr.write(line);
 }
 function status(message) {
-  if(!window || window.isDestroyed())return;
+  if(!window || window.isDestroyed())return Promise.resolve();
   const safe=String(message).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;');
-  window.loadURL('data:text/html;charset=utf-8,'+encodeURIComponent(
+  const navigation=window.loadURL('data:text/html;charset=utf-8,'+encodeURIComponent(
     '<!doctype html><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src \'none\'; style-src \'unsafe-inline\'"><body style="background:#101820;color:white;font:16px Segoe UI,Arial,sans-serif;margin:8%"><h2>OrdaX OS Desktop Dev</h2><p>'+safe+'</p></body>'
   ));
+  // A later Native navigation must never race with this splash load. A
+  // transient status navigation may still fail on shutdown; do not leak an
+  // unhandled Electron rejection from callers displaying an error state.
+  navigation.catch(error=>log('Desktop status page unavailable: '+String(error?.message??error)));
+  return navigation;
 }
 function navigationPolicy(base) {
   const allowed=new URL(base);
@@ -604,8 +609,11 @@ app.whenReady().then(async()=>{
   menu(userData);
   browserHost=createDesktopBrowserHost({window,ipcMain,WebContentsView,session,dialog,log});
   window.webContents.on('page-title-updated',event=>{event.preventDefault();window?.setTitle('OrdaX OS Desktop Dev');});
-  status('Iniciando a Surface Native compartilhada...');
   try{
+    // Electron can reject the in-flight data: URL with ERR_ABORTED (-3)
+    // when Native navigation begins first. Wait for splash completion before
+    // starting the sole installed Native host; fail closed on a real error.
+    await status('Iniciando a Surface Native compartilhada...');
     const fileToken=randomBytes(32).toString('hex');
     const localSessionToken=randomBytes(32).toString('hex');
     const nativeSessionToken=randomBytes(32).toString('hex');
