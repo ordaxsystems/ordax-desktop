@@ -156,37 +156,9 @@ jobs:
             throw 'Packaged Desktop source differs from the published NSIS'
           }
           $workflow = Get-Content '.github/workflows/desktop-source.yml' -Raw
-          if ($workflow -notmatch '(?m)^      os_sha: 3bafa3d1e25f644cf089cce1444e1f85c53c2c4b
-  # Test-only changes still pass source contracts but do not rebuild identical
-  # Electron/Native bytes. Unknown impact and manual dispatch fail closed.
-  windows-installer:
-    name: Canonical Windows installer (detached Desktop + OS)
-    needs: windows-source
-    if: needs.windows-source.outputs.installer_required == 'true'
-    uses: ordaxsystems/ordax-os/.github/workflows/windows-desktop-dev.yml@1c83a70813957d865b13e95790f2e16b0293bfb1
-    with:
-      os_sha: 3bafa3d1e25f644cf089cce1444e1f85c53c2c4b
-      desktop_sha: ${{ github.event.pull_request.head.sha || github.sha }}
-      publish_dev_release: true
-    permissions:
-      contents: write
- -or
-              $workflow -notmatch '(?m)^      publish_dev_release: true
-  # Test-only changes still pass source contracts but do not rebuild identical
-  # Electron/Native bytes. Unknown impact and manual dispatch fail closed.
-  windows-installer:
-    name: Canonical Windows installer (detached Desktop + OS)
-    needs: windows-source
-    if: needs.windows-source.outputs.installer_required == 'true'
-    uses: ordaxsystems/ordax-os/.github/workflows/windows-desktop-dev.yml@1c83a70813957d865b13e95790f2e16b0293bfb1
-    with:
-      os_sha: 3bafa3d1e25f644cf089cce1444e1f85c53c2c4b
-      desktop_sha: ${{ github.event.pull_request.head.sha || github.sha }}
-      publish_dev_release: true
-    permissions:
-      contents: write
-) {
-            throw 'Installer OS or release mode was changed after publication'
+          if (-not $workflow.Contains('      os_sha: 3bafa3d1e25f644cf089cce1444e1f85c53c2c4b') -or
+              -not $workflow.Contains('      publish_dev_release: true')) {
+            throw 'Installer OS or release mode changed after publication'
           }
           $release = (& gh api "repos/$repo/releases/tags/$tag" | ConvertFrom-Json)
           if ($LASTEXITCODE -ne 0 -or $release.id -ne 436689504 -or
