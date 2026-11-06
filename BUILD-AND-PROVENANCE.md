@@ -82,7 +82,7 @@ o workflow reutilizável do OS
 `workflow_call` fixada em `3e7c907b11199c5a7e55f54df57268836f0c3eb5`.
 Essa referência é a versão compatível do produtor reutilizável, **não** a
 revisão Native empacotada: `os_sha` aponta separadamente para
-`4916cf91b11a5d0fe2641da8905a1bd3409b6667`, e `desktop_sha` para o
+`352782a04c0ea48e33df139199e80898532d60d0` (OS main com Surface #93), e `desktop_sha` para o
 commit exato deste repositório. A versão atual do workflow do OS não
 expõe `workflow_call`; apontar `uses` diretamente para ela quebraria a CI.
 Atualizar `os_sha` exige nova prova NSIS, sem criar outro produtor.
