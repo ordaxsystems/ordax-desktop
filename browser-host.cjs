@@ -181,7 +181,13 @@ function createDesktopBrowserHost({window, ipcMain, WebContentsView, session, di
     wc.on('media-started-playing',()=>activeMedia.set(wc,(activeMedia.get(wc)??0)+1));
     wc.on('media-paused',()=>activeMedia.set(wc,Math.max(0,(activeMedia.get(wc)??0)-1)));
     // A different document cannot inherit the previous page's media state.
-    wc.on('did-start-navigation',()=>activeMedia.delete(wc));
+    wc.on('did-start-navigation',details=>{
+      // Hash/SPA navigation does not stop playback, and subframe navigation
+      // must not erase activity from another frame in the same WebContents.
+      // Unknown navigation metadata retains the safety gate.
+      if(details?.isMainFrame===true && details.isSameDocument===false)
+        activeMedia.delete(wc);
+    });
     // A navigation/reload revokes prior selection and find results. Chromium
     // may resolve executeJavaScript only after the next document is active.
     for(const event of ['did-start-navigation','did-navigate','did-navigate-in-page'])
