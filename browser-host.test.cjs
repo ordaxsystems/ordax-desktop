@@ -372,3 +372,93 @@ test('browser viewport restores its requested size after a temporary Windows or 
   assert.deepEqual(view.bounds,{x:0,y:0,width:0,height:0},
     'an intentionally hidden browser must remain hidden after resize');
 });
+ 
+test('closing a tab releases only its unapproved downloads, even with an open save dialog',async()=>{
+  for(const phase of ['pending','approving']){
+    const f=fixture();
+    f.post({type:'tab.open',tabId:'tab-pending',url:'https://example.com'});
+    await Promise.resolve();
+    const item=new EventEmitter();
+    let cancelled=0, resumed=0, saved=0, resolveDialog;
+    item.getFilename=()=> 'pending.txt';
+    item.pause=()=>{};
+    item.cancel=()=>{cancelled++;};
+    item.setSavePath=()=>{saved++;};
+    item.resume=()=>{resumed++;};
+    f.browserSession.emit('will-download',{preventDefault(){throw Error('unexpected rejection');}},
+      item,View.all[0].webContents);
+    assert.equal(f.host.hasActiveWork(),true);
+    const pending=f.ui.sent.map(x=>x.value).find(x=>x.type==='browser-download'&&x.status==='pending');
+    if(phase==='approving'){
+      f.dialog.showSaveDialog=()=>new Promise(resolve=>{resolveDialog=resolve;});
+      f.post({type:'download.approve',id:pending.id});
+    }
+    f.post({type:'tab.close',tabId:'tab-pending'});
+    assert.equal(cancelled,1,'tab closure cancels an unapproved transfer once');
+    assert.equal(f.host.hasActiveWork(),false,'closed tab cannot block future idle updates');
+    if(resolveDialog){
+      resolveDialog({canceled:false,filePath:'C:\\Users\\Dev\\pending.txt'});
+      await new Promise(resolve=>setImmediate(resolve));
+    }
+    f.post({type:'download.approve',id:pending.id});
+    item.emit('done',{},'cancelled');
+    assert.equal(saved,0,'late consent cannot write a closed tab download');
+    assert.equal(resumed,0,'closed tab download never resumes');
+    assert.equal(f.ui.sent.map(x=>x.value).filter(x=>
+      x.type==='browser-download'&&x.id===pending.id&&x.status==='cancelled').length,1,
+      'late done event cannot duplicate terminal result');
+    f.host.dispose();
+  }
+});
+
+test('approved downloads continue after closing their tab; explicit cancellation releases the gate',async t=>{
+  const f=fixture();t.after(()=>f.host.dispose());
+  f.post({type:'tab.open',tabId:'tab-approved',url:'https://example.com'});
+  await Promise.resolve();
+  const item=new EventEmitter();
+  let cancelled=0, resumed=0;
+  item.getFilename=()=> 'approved.bin';
+  item.pause=()=>{};
+  item.cancel=()=>{cancelled++;};
+  item.setSavePath=()=>{};
+  item.resume=()=>{resumed++;};
+  f.browserSession.emit('will-download',{preventDefault(){throw Error('unexpected rejection');}},
+    item,View.all[0].webContents);
+  const pending=f.ui.sent.map(x=>x.value).find(x=>x.type==='browser-download'&&x.status==='pending');
+  f.dialog.showSaveDialog=async()=>({canceled:false,filePath:'C:\\Users\\Dev\\approved.bin'});
+  f.post({type:'download.approve',id:pending.id});
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(resumed,1);
+  f.post({type:'tab.close',tabId:'tab-approved'});
+  assert.equal(cancelled,0,'an approved transfer remains active after its tab closes');
+  assert.equal(f.host.hasActiveWork(),true);
+  f.post({type:'download.cancel',id:pending.id});
+  assert.equal(cancelled,1);
+  assert.equal(f.host.hasActiveWork(),false,'explicit cancel releases the update gate without waiting for done');
+  item.emit('done',{},'cancelled');
+  assert.equal(f.ui.sent.map(x=>x.value).filter(x=>
+    x.type==='browser-download'&&x.id===pending.id&&x.status==='cancelled').length,1);
+});
+
+test('Chromium cancellation failure must retain the update gate until a terminal event',async t=>{
+  const f=fixture();t.after(()=>f.host.dispose());
+  f.post({type:'tab.open',tabId:'tab-failed-cancel',url:'https://example.com'});
+  await Promise.resolve();
+  const item=new EventEmitter();
+  let cancellations=0;
+  item.getFilename=()=> 'unconfirmed.bin';
+  item.pause=()=>{};
+  item.cancel=()=>{cancellations++;throw Error('download still active');};
+  f.browserSession.emit('will-download',{preventDefault(){throw Error('unexpected rejection');}},
+    item,View.all[0].webContents);
+  const pending=f.ui.sent.map(x=>x.value).find(x=>x.type==='browser-download'&&x.status==='pending');
+  f.post({type:'tab.close',tabId:'tab-failed-cancel'});
+  assert.equal(cancellations,1);
+  assert.equal(f.host.hasActiveWork(),true,
+    'failed cancel must block relaunch rather than assume Chromium stopped');
+  assert.equal(f.ui.sent.some(x=>x.value.id===pending.id&&x.value.status==='cancelled'),false,
+    'no false cancellation receipt');
+  item.emit('done',{},'cancelled');
+  assert.equal(f.host.hasActiveWork(),false,'actual terminal signal releases gate');
+  assert.equal(f.ui.sent.filter(x=>x.value.id===pending.id&&x.value.status==='cancelled').length,1);
+});
