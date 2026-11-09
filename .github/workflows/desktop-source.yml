@@ -215,6 +215,10 @@ jobs:
     with:
       os_sha: 3bafa3d1e25f644cf089cce1444e1f85c53c2c4b
       desktop_sha: ${{ github.event.pull_request.head.sha || github.sha }}
-      publish_dev_release: true
+      # The pinned OS publisher creates a draft and then queries it by tag;
+      # GitHub returns 404 for that draft. Keep the real NSIS + Windows smoke
+      # gate, but fail closed on publication until its canonical owner fixes it.
+      # Do not create duplicate draft releases on PR or main pushes.
+      publish_dev_release: false
     permissions:
-      contents: write
+      contents: read
