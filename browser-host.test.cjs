@@ -439,3 +439,26 @@ test('approved downloads continue after closing their tab; explicit cancellation
   assert.equal(f.ui.sent.map(x=>x.value).filter(x=>
     x.type==='browser-download'&&x.id===pending.id&&x.status==='cancelled').length,1);
 });
+
+test('Chromium cancellation failure must retain the update gate until a terminal event',async t=>{
+  const f=fixture();t.after(()=>f.host.dispose());
+  f.post({type:'tab.open',tabId:'tab-failed-cancel',url:'https://example.com'});
+  await Promise.resolve();
+  const item=new EventEmitter();
+  let cancellations=0;
+  item.getFilename=()=> 'unconfirmed.bin';
+  item.pause=()=>{};
+  item.cancel=()=>{cancellations++;throw Error('download still active');};
+  f.browserSession.emit('will-download',{preventDefault(){throw Error('unexpected rejection');}},
+    item,View.all[0].webContents);
+  const pending=f.ui.sent.map(x=>x.value).find(x=>x.type==='browser-download'&&x.status==='pending');
+  f.post({type:'tab.close',tabId:'tab-failed-cancel'});
+  assert.equal(cancellations,1);
+  assert.equal(f.host.hasActiveWork(),true,
+    'failed cancel must block relaunch rather than assume Chromium stopped');
+  assert.equal(f.ui.sent.some(x=>x.value.id===pending.id&&x.value.status==='cancelled'),false,
+    'no false cancellation receipt');
+  item.emit('done',{},'cancelled');
+  assert.equal(f.host.hasActiveWork(),false,'actual terminal signal releases gate');
+  assert.equal(f.ui.sent.filter(x=>x.value.id===pending.id&&x.value.status==='cancelled').length,1);
+});
