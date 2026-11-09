@@ -57,6 +57,16 @@ test('Browser URL validation rejects privileged schemes, credentials and oversiz
   assert.equal(safeWebUrl('https://bob:pass@example.com'),null);
   assert.equal(safeWebUrl('',{blank:true}),'about:blank');
   assert.equal(safeDownloadName('..\\..\\test<script>.pdf'),'test_script_.pdf');
+  assert.equal(safeDownloadName('CON.txt'),'download-CON.txt');
+  assert.equal(safeDownloadName('nul.tar.gz'),'download-nul.tar.gz');
+  assert.equal(safeDownloadName('AUX.pdf'),'download-AUX.pdf');
+  assert.equal(safeDownloadName('Com9.log'),'download-Com9.log');
+  assert.equal(safeDownloadName('lPt1'),'download-lPt1');
+  assert.equal(safeDownloadName('CON .txt'),'download-CON .txt');
+  assert.equal(safeDownloadName('report.txt...  '),'report.txt');
+  assert.equal(safeDownloadName('report .pdf'),'report .pdf');
+  assert.equal(safeDownloadName('....'),'download');
+  assert.equal(safeDownloadName('design-final.pdf'),'design-final.pdf');
 });
 
 test('Native Internet session uses isolated Chromium views, actual tabs, and rejects unsafe navigation',async t=>{
@@ -634,4 +644,45 @@ test('synchronous completion during resume leaves terminal receipt last',async t
   assert.equal(f.host.hasActiveWork(),false);
   assert.deepEqual(f.ui.sent.map(x=>x.value).filter(x=>x.id===pending.id).map(x=>x.status),
     ['pending','saved'],'completed download cannot regress to downloading');
+});
+
+test('download completing while Chromium pauses has one terminal receipt and releases updater',async t=>{
+  const f=fixture();t.after(()=>f.host.dispose());
+  f.post({type:'tab.open',tabId:'tab-early-done',url:'https://example.com'});
+  await Promise.resolve();
+  const wc=View.all[0].webContents;
+  const item=new EventEmitter();
+  item.getFilename=()=> 'NUL.txt';
+  item.pause=()=>item.emit('done',{},'completed');
+  item.cancel=()=>{throw Error('completed item cannot be cancelled')};
+  f.browserSession.emit('will-download',{preventDefault(){throw Error('unexpected preventDefault')}},item,wc);
+  const events=f.ui.sent.map(x=>x.value).filter(x=>x.type==='browser-download');
+  assert.deepEqual(events.map(x=>x.status),['pending','saved']);
+  assert.equal(events[0].fileName,'download-NUL.txt');
+  assert.equal(f.host.hasActiveWork(),false,'synchronous done cannot strand the update gate');
+});
+
+test('download pause failure cancels unapproved transfer without losing activity on cancellation failure',async t=>{
+  for(const cancellationFails of [false,true]){
+    const f=fixture();t.after(()=>f.host.dispose());
+    f.post({type:'tab.open',tabId:'tab-pause-failure',url:'https://example.com'});
+    await Promise.resolve();
+    const item=new EventEmitter();
+    item.getFilename=()=> 'sample.zip';
+    item.pause=()=>{throw Error('transfer already unpausable')};
+    let cancellations=0;
+    item.cancel=()=>{cancellations++;if(cancellationFails)throw Error('cannot cancel')};
+    f.browserSession.emit('will-download',{preventDefault(){throw Error('unexpected preventDefault')}},
+      item,View.all[0].webContents);
+    assert.equal(cancellations,1);
+    const states=()=>f.ui.sent.map(x=>x.value).filter(x=>x.type==='browser-download').map(x=>x.status);
+    assert.deepEqual(states(),cancellationFails?['pending']:['pending','cancelled']);
+    assert.equal(f.host.hasActiveWork(),cancellationFails,
+      'unconfirmed cancellation must retain the safety gate');
+    if(cancellationFails){
+      item.emit('done',{},'cancelled');
+      assert.deepEqual(states(),['pending','cancelled']);
+      assert.equal(f.host.hasActiveWork(),false);
+    }
+  }
 });
