@@ -367,10 +367,27 @@ test('browser viewport restores its requested size after a temporary Windows or 
   f.window.emit('resize');
   assert.deepEqual(view.bounds,{x:24,y:50,width:800,height:450},
     'a temporary clamp must not overwrite the original viewport request');
+  // RDP may reduce the content area smaller than the viewport origin.
+  // The renderer can resend a still-valid full-size request at that moment.
+  f.window.getContentBounds=()=>({width:10,height:10});
+  f.window.emit('resize');
+  assert.deepEqual(view.bounds,{x:0,y:0,width:0,height:0});
+  f.post({type:'viewport.set',viewport:{visible:true,x:24,y:50,width:800,height:450}});
+  assert.deepEqual(view.bounds,{x:0,y:0,width:0,height:0},
+    'offscreen viewport remains visually hidden while the RDP window is tiny');
+  f.window.getContentBounds=()=>({width:1000,height:700});
+  f.window.emit('resize');
+  assert.deepEqual(view.bounds,{x:24,y:50,width:800,height:450},
+    'a valid request made during transient RDP shrink must recover on expansion');
   f.post({type:'viewport.set',viewport:{visible:false,x:24,y:50,width:800,height:450}});
   f.window.emit('resize');
   assert.deepEqual(view.bounds,{x:0,y:0,width:0,height:0},
     'an intentionally hidden browser must remain hidden after resize');
+  // Malformed requests are not recoverable viewport intents.
+  f.post({type:'viewport.set',viewport:{visible:true,x:-4,y:50,width:800,height:450}});
+  f.window.emit('resize');
+  assert.deepEqual(view.bounds,{x:0,y:0,width:0,height:0},
+    'invalid viewport coordinates cannot be restored after resize');
 });
  
 test('closing a tab releases only its unapproved downloads, even with an open save dialog',async()=>{
