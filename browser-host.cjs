@@ -115,6 +115,18 @@ function createDesktopBrowserHost({window, ipcMain, WebContentsView, session, di
     }
   };
   const downloadEvent=(id,fileName,status)=>send({type:'browser-download',id,fileName,status});
+  // Release the update gate synchronously when consent is revoked. Electron's
+  // 'done' event may arrive later (or never after its WebContents closes).
+  const cancelDownload=(id,record)=>{
+    if(downloads.get(id)!==record ||
+       !['pending','approving','downloading'].includes(record.phase))return false;
+    record.phase='cancelled';
+    downloads.delete(id);
+    try{record.item.cancel();}
+    catch(error){log('Browser download cancellation failed: '+error.message);}
+    downloadEvent(id,record.fileName,'cancelled');
+    return true;
+  };
   const onDownload = (event,item,contents) => {
     if (disposed || ![...tabs.values()].some(v=>v.webContents===contents)) {
       event.preventDefault();return;
@@ -123,10 +135,12 @@ function createDesktopBrowserHost({window, ipcMain, WebContentsView, session, di
     const id='download-'+randomBytes(8).toString('hex');
     const fileName=safeDownloadName(item.getFilename());
     item.pause();
-    const record={item,fileName,phase:'pending'};
+    const record={item,contents,fileName,phase:'pending'};
     downloads.set(id,record);
     downloadEvent(id,fileName,'pending');
     item.on('done',(_event,state)=>{
+      // A cancelled transfer is already forgotten; never publish twice.
+      if(downloads.get(id)!==record)return;
       record.phase='done';
       downloads.delete(id);
       downloadEvent(id,fileName,state==='completed'?'saved':state==='cancelled'?'cancelled':'failed');
@@ -166,6 +180,13 @@ function createDesktopBrowserHost({window, ipcMain, WebContentsView, session, di
   const close = id => {
     const view=tabs.get(id);
     if(!view)return;
+    // Unapproved downloads have no owned save destination once their tab
+    // closes. Do not strand a paused item and block ordax-pull forever.
+    // Already approved transfers keep running, as in a normal browser.
+    for(const [downloadId,record] of downloads){
+      if(record.contents===view.webContents && record.phase!=='downloading')
+        cancelDownload(downloadId,record);
+    }
     invalidatePage(id,view.webContents);
     window.contentView.removeChildView(view);
     tabs.delete(id);
@@ -277,13 +298,7 @@ function createDesktopBrowserHost({window, ipcMain, WebContentsView, session, di
     if(!DOWNLOAD_ID.test(command?.id))return;
     const record=downloads.get(command.id);
     if(!record)return;
-    if(command.type==='download.cancel'){
-      if(record.phase==='pending'||record.phase==='approving'||record.phase==='downloading'){
-        record.phase='cancelled';
-        record.item.cancel();
-      }
-      return;
-    }
+    if(command.type==='download.cancel'){cancelDownload(command.id,record);return;}
     if(command.type!=='download.approve'||record.phase!=='pending')return;
     // One consent dialog per item; a late answer must never revive a
     // cancelled/completed download or an already disposed browser host.
@@ -292,25 +307,19 @@ function createDesktopBrowserHost({window, ipcMain, WebContentsView, session, di
       buttonLabel:'Salvar',properties:['createDirectory','showOverwriteConfirmation']})
       .then(result=>{
         if(disposed||downloads.get(command.id)!==record||record.phase!=='approving')return;
-        if(result.canceled||!result.filePath){
-          record.phase='cancelled';
-          record.item.cancel();
-          return;
-        }
+        if(result.canceled||!result.filePath){cancelDownload(command.id,record);return;}
         try {
           record.item.setSavePath(result.filePath);
           record.item.resume();
           record.phase='downloading';
           downloadEvent(command.id,record.fileName,'downloading');
         } catch(error) {
-          record.phase='cancelled';
-          record.item.cancel();
+          cancelDownload(command.id,record);
           log('Browser download could not be saved: '+error.message);
         }
       }).catch(error=>{
         if(disposed||downloads.get(command.id)!==record||record.phase!=='approving')return;
-        record.phase='cancelled';
-        record.item.cancel();
+        cancelDownload(command.id,record);
         log('Browser save dialog failed: '+error.message);
       });
   };
@@ -323,8 +332,7 @@ function createDesktopBrowserHost({window, ipcMain, WebContentsView, session, di
     ipcMain.removeListener(CMD,onMessage);
     window.removeListener('resize',onResize);
     browserSession.removeListener('will-download',onDownload);
-    for(const record of downloads.values())record.item.cancel();
-    downloads.clear();
+    for(const [id,record] of downloads)cancelDownload(id,record);
     for(const [id,v] of [...tabs]) {
       invalidatePage(id,v.webContents);
       window.contentView.removeChildView(v);
