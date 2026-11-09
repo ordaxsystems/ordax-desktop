@@ -7,9 +7,9 @@
   "scripts": {
     "start": "electron .",
     "dev:local": "node local-dev.cjs",
-    "test": "node --test standalone-stage.test.cjs local-dev.test.cjs window-layout.test.cjs host-recovery.test.cjs host-startup.test.cjs native-grant-frame.test.cjs",
+    "test": "node --test standalone-stage.test.cjs local-dev.test.cjs window-layout.test.cjs host-recovery.test.cjs host-startup.test.cjs native-grant-frame.test.cjs browser-host.test.cjs",
     "dist:win": "electron-builder --win nsis --x64",
-    "test:portable": "node --test standalone-stage.test.cjs local-dev.test.cjs window-layout.test.cjs host-recovery.test.cjs host-startup.test.cjs native-grant-frame.test.cjs"
+    "test:portable": "node --test standalone-stage.test.cjs local-dev.test.cjs window-layout.test.cjs host-recovery.test.cjs host-startup.test.cjs native-grant-frame.test.cjs browser-host.test.cjs"
   },
   "devDependencies": {
     "electron": "^40.0.0",

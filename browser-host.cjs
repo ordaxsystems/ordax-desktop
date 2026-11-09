@@ -69,6 +69,9 @@ function createDesktopBrowserHost({window, ipcMain, WebContentsView, session, di
   };
   let activeTabId = null;
   let viewport = null;
+  // Keep the validated renderer request separate from its currently clamped
+  // size. A temporary RDP/window shrink must not permanently shrink the tab.
+  let requestedViewport = null;
   let disposed = false;
   const browserSession = session.fromPartition('persist:ordax-desktop-internet');
   const send = payload => {
@@ -185,7 +188,16 @@ function createDesktopBrowserHost({window, ipcMain, WebContentsView, session, di
     const {type,tabId}=command;
     if(typeof type!=='string')return;
     if(type==='snapshot.request'){publish();return;}
-    if(type==='viewport.set'){viewport=viewportBounds(command.viewport,window);layout();return;}
+    if(type==='viewport.set'){
+      const next=viewportBounds(command.viewport,window);
+      // Invalid or hidden requests remain hidden; never resurrect them on resize.
+      requestedViewport=next?{
+        visible:true,x:command.viewport.x,y:command.viewport.y,
+        width:command.viewport.width,height:command.viewport.height,
+      }:null;
+      viewport=next;
+      layout();return;
+    }
     if(type==='tab.open'){open(tabId,command.url??'');return;}
     if(type==='tab.close'){if(TAB_ID.test(tabId))close(tabId);return;}
     if(type==='tab.activate'){
@@ -304,7 +316,7 @@ function createDesktopBrowserHost({window, ipcMain, WebContentsView, session, di
   };
   const onMessage=(e,raw)=>{handle(e,raw);handleDownloads(e,raw);};
   ipcMain.on(CMD,onMessage);
-  const onResize=()=>{viewport=viewportBounds(viewport?{...viewport,visible:true}:null,window);layout();};
+  const onResize=()=>{viewport=viewportBounds(requestedViewport,window);layout();};
   window.on('resize',onResize);
   const dispose=()=>{
     if(disposed)return;disposed=true;
