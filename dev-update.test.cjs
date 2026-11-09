@@ -9,7 +9,9 @@ const { tmpdir } = require('node:os');
 // by CI; the repository itself must never ship a second authority contract.
 // Set this test-only development locator before runtime.cjs loads its policy.
 const osCheckout=join(__dirname,'.deps','ordax-os');
-if(existsSync(join(osCheckout,'docs','contracts','distribution-profiles.json'))){
+const canonicalOs=existsSync(join(osCheckout,'docs','contracts','distribution-profiles.json'))
+  ? osCheckout : join(__dirname,'../..');
+if(canonicalOs===osCheckout){
   process.env.ORDAX_DESKTOP_LOCAL_DEV='1';
   process.env.ORDAX_DESKTOP_OS_CHECKOUT=osCheckout;
 }
@@ -27,8 +29,8 @@ test('Desktop DEV Git sparse checkout includes the existing MCP candidate proof'
   assert.ok(sparseCall, 'Git sparse source manifest must remain explicit');
   assert.doesNotMatch(sparseCall[0], /'tools\/windows-desktop'/,
     'Windows compiler and Electron shell are not OS source inputs');
-  const evidence=JSON.parse(readFileSync(join(__dirname,
-    '../../docs/evidence/desktop-runtime-windows-candidate-2026-10-31.json'),'utf8'));
+  const evidence=JSON.parse(readFileSync(join(canonicalOs,
+    'docs/evidence/desktop-runtime-windows-candidate-2026-10-31.json'),'utf8'));
   assert.equal(evidence.$schema,'ordax.desktop-runtime-candidate-evidence/1');
   assert.equal(evidence.candidate.platform,'windows-amd64');
   assert.equal(evidence.candidate.signature_present,false);
@@ -248,7 +250,7 @@ test('ordax-pull Desktop activates only verified pending Git revisions during sa
 test('ordax-pull checks canonical Native First Run receipt before auto update',async t=>{
   const root=mkdtempSync(join(tmpdir(),'ordax-first-run-update-'));
   t.after(()=>rmSync(root,{recursive:true,force:true}));
-  const template=join(__dirname,'../..');
+  const template=canonicalOs;
   const dir=join(root,'native-state');
   mkdirSync(dir);
   const file=join(dir,'native-state.json');
