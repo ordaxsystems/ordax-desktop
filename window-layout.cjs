@@ -93,6 +93,27 @@ function reconcileDesktopWindowDisplayChange(areas,bounds){
   if(['x','y','width','height'].every(key=>next[key]===bounds[key]))return null;
   return Object.freeze(next);
 }
+// Keep the user's requested rectangle separately from the transient
+// work-area clamp. A remote login can start at 640x480 while the saved
+// preference is 1250x850; it must survive that initial boot and resize.
+function readDesktopWindowPreference(userData){
+  try{
+    const record=JSON.parse(readFileSync(join(userData,FILE),'utf8'));
+    if(record?.schema===SCHEMA && validRect(record.bounds) &&
+       typeof record.maximized==='boolean')return Object.freeze({...record.bounds});
+  }catch{}
+  return null;
+}
+// Restore only when the preferred monitor's work area actually intersects
+// its old position. A disconnected secondary must not recenter the user on
+// an unrelated monitor every time DPI or RDP topology updates.
+function fitDesktopWindowPreference(areas,preferred){
+  if(!validRect(preferred) || !Array.isArray(areas) ||
+     !areas.some(area=>intersection(area,preferred)>0))return null;
+  return resolveDesktopWindowLayout(areas,{
+    schema:SCHEMA,bounds:preferred,maximized:false,
+  }).bounds;
+}
 function readDesktopWindowLayout(userData,areas){
   let stored=null;
   try{stored=JSON.parse(readFileSync(join(userData,FILE),'utf8'))}catch{}
@@ -116,7 +137,7 @@ function saveDesktopWindowLayout(userData,bounds,maximized){
 // Window moves/resizes are frequent; persist only once after a quiet period.
 // This also preserves the layout after an unexpected Electron shutdown.
 function createDesktopWindowLayoutPersistence({
-  userData,getNormalBounds,isMaximized,
+  userData,getNormalBounds,isMaximized,preferredBounds=null,
   setTimeoutImpl=setTimeout,clearTimeoutImpl=clearTimeout,
 }={}){
   if(typeof userData!=='string'||!userData||
@@ -124,12 +145,25 @@ function createDesktopWindowLayoutPersistence({
      typeof setTimeoutImpl!=='function'||typeof clearTimeoutImpl!=='function')
     throw new TypeError('Desktop window layout requires one owning window');
   let timer=null,closed=false;
+  // A temporary screen clamp is presentation, not a user resize. Keep the
+  // last intentional rectangle for persistence, restart and RDP restoration.
+  let preferred=validRect(preferredBounds)?{...preferredBounds}:null;
+  let adjusted=null;
+  const same=(a,b)=>a&&b&&
+    ['x','y','width','height'].every(key=>a[key]===b[key]);
   const persist=()=>{
-    try{return saveDesktopWindowLayout(userData,getNormalBounds(),isMaximized())}
+    try{return saveDesktopWindowLayout(userData,preferred??getNormalBounds(),isMaximized())}
     catch{return false}
   };
   const schedule=()=>{
     if(closed)return;
+    const current=getNormalBounds();
+    if(validRect(current) && !same(current,adjusted)){
+      // A real user move/resize after an RDP clamp intentionally replaces
+      // the old preference; a setBounds event for the clamp does not.
+      preferred={...current};
+      adjusted=null;
+    }
     if(timer!==null)clearTimeoutImpl(timer);
     timer=setTimeoutImpl(()=>{
       timer=null;
@@ -137,17 +171,30 @@ function createDesktopWindowLayoutPersistence({
     },500);
     timer?.unref?.();
   };
+  const markDisplayAdjustment=target=>{
+    if(closed||!validRect(target))return;
+    if(!preferred){
+      const current=getNormalBounds();
+      if(validRect(current))preferred={...current};
+    }
+    adjusted={...target};
+  };
+  const getPreferredBounds=()=>preferred?Object.freeze({...preferred}):null;
+  const isDisplayAdjusted=()=>adjusted!==null;
   const close=()=>{
     if(closed)return false;
     closed=true;
     if(timer!==null){clearTimeoutImpl(timer);timer=null}
     return persist();
   };
-  return Object.freeze({schedule,close});
+  return Object.freeze({
+    schedule,markDisplayAdjustment,getPreferredBounds,isDisplayAdjusted,close,
+  });
 }
 module.exports={
   resolveDesktopWindowLayout,desktopMinimumWindowSize,
   reconcileDesktopWindowDisplayChange,
-  readDesktopWindowLayout,saveDesktopWindowLayout,
+  readDesktopWindowLayout,readDesktopWindowPreference,
+  fitDesktopWindowPreference,saveDesktopWindowLayout,
   createDesktopWindowLayoutPersistence,
 };

@@ -6,7 +6,8 @@ const {tmpdir}=require('node:os');
 const {join}=require('node:path');
 const {resolveDesktopWindowLayout,desktopMinimumWindowSize,
   reconcileDesktopWindowDisplayChange,
-  readDesktopWindowLayout,saveDesktopWindowLayout,
+  readDesktopWindowLayout,readDesktopWindowPreference,
+  fitDesktopWindowPreference,saveDesktopWindowLayout,
   createDesktopWindowLayoutPersistence}=require('./window-layout.cjs');
 const areas=[{x:0,y:0,width:1920,height:1080}];
 const layout=(bounds,maximized=false)=>({
@@ -112,6 +113,9 @@ test('Electron shell and packaged installer use the same window layout authority
   assert.match(main,/desktopMinimumWindowSize\(savedWindow\.bounds\)/,
     'RDP and small displays must lower Electron minimum size to work area');
   assert.match(main,/createDesktopWindowLayoutPersistence\(\{/);
+  assert.match(main,/geometry\.markDisplayAdjustment\(savedWindow\.bounds\)/);
+  assert.match(main,/fitDesktopWindowPreference\(areas,geometry\.getPreferredBounds\(\)\)/);
+  assert.match(main,/geometry\.markDisplayAdjustment\(target\)/);
   assert.match(main,/window\.on\(event,geometry\.schedule\)/);
   assert.match(main,/window\.getNormalBounds\(\)/);
   assert.match(main,/window\.isMaximized\(\)/);
@@ -153,6 +157,68 @@ test('window moves debounce disk writes and survive an unexpected quit',t=>{
   persist.schedule();
   assert.equal(timers.size,0,'closed window cannot schedule further writes');
   assert.equal(persist.close(),false);
+});
+test('RDP shrink preserves preferred Desktop geometry and restores it on expansion',t=>{
+  const userData=mkdtempSync(join(tmpdir(),'ordax-remote-window-preference-'));
+  t.after(()=>rmSync(userData,{recursive:true,force:true}));
+  const preferred={x:260,y:150,width:1250,height:850};
+  const rdp=[{x:0,y:0,width:640,height:480}];
+  assert.equal(saveDesktopWindowLayout(userData,preferred,false),true);
+  assert.deepEqual(readDesktopWindowPreference(userData),preferred);
+  const compact=readDesktopWindowLayout(userData,rdp).bounds;
+  assert.deepEqual(compact,{x:0,y:0,width:640,height:480});
+  let bounds={...compact},maximized=false;
+  const pending=new Set();
+  const geometry=createDesktopWindowLayoutPersistence({
+    userData,preferredBounds:readDesktopWindowPreference(userData),
+    getNormalBounds:()=>bounds,isMaximized:()=>maximized,
+    setTimeoutImpl:fn=>{const timer={fn,unref(){}};pending.add(timer);return timer;},
+    clearTimeoutImpl:timer=>{pending.delete(timer)},
+  });
+  const flush=()=>{for(const timer of [...pending]){pending.delete(timer);timer.fn();}};
+  geometry.markDisplayAdjustment(compact);
+  geometry.schedule();
+  flush();
+  assert.deepEqual(readDesktopWindowPreference(userData),preferred,
+    'startup on a 640x480 RDP session cannot replace the saved 1250x850 size');
+  assert.equal(geometry.isDisplayAdjusted(),true);
+  assert.deepEqual(geometry.getPreferredBounds(),preferred);
+  assert.deepEqual(fitDesktopWindowPreference(rdp,preferred),compact);
+  assert.deepEqual(fitDesktopWindowPreference(areas,preferred),preferred,
+    'larger restored monitor can return to the exact preferred position');
+  const toRestore=fitDesktopWindowPreference(areas,geometry.getPreferredBounds());
+  geometry.markDisplayAdjustment(toRestore);
+  bounds={...toRestore};
+  geometry.schedule();flush();
+  assert.deepEqual(readDesktopWindowPreference(userData),preferred);
+  assert.equal(geometry.close(),true);
+  assert.deepEqual(readDesktopWindowPreference(userData),preferred,
+    'normal window close must also keep the preferred layout');
+});
+test('user resize after automatic RDP clamp becomes new preference',t=>{
+  const userData=mkdtempSync(join(tmpdir(),'ordax-remote-user-resize-'));
+  t.after(()=>rmSync(userData,{recursive:true,force:true}));
+  const original={x:250,y:130,width:1250,height:820};
+  const auto={x:0,y:0,width:640,height:480};
+  const chosen={x:20,y:30,width:600,height:420};
+  let bounds={...original};
+  const timers=new Set();
+  const geometry=createDesktopWindowLayoutPersistence({
+    userData,getNormalBounds:()=>bounds,isMaximized:()=>false,
+    setTimeoutImpl:fn=>{const timer={fn,unref(){}};timers.add(timer);return timer;},
+    clearTimeoutImpl:timer=>timers.delete(timer),
+  });
+  geometry.markDisplayAdjustment(auto);
+  bounds={...auto};geometry.schedule();
+  assert.deepEqual(geometry.getPreferredBounds(),original);
+  bounds={...chosen};geometry.schedule();
+  assert.equal(geometry.isDisplayAdjusted(),false);
+  assert.equal(geometry.close(),true);
+  assert.deepEqual(readDesktopWindowPreference(userData),chosen,
+    'a deliberate user resize supersedes the old RDP preference');
+  assert.equal(timers.size,0);
+  assert.equal(fitDesktopWindowPreference(areas,{x:-1400,y:80,width:1000,height:650}),null,
+    'disconnected monitor preference must not yank the current window away');
 });
 test('window state persists only to its current Desktop user profile',t=>{
   const root=mkdtempSync(join(tmpdir(),'ordax-window-layout-test-'));
