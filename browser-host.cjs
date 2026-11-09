@@ -85,10 +85,29 @@ function createDesktopBrowserHost({window, ipcMain, WebContentsView, session, di
   // size. A temporary RDP/window shrink must not permanently shrink the tab.
   let requestedViewport = null;
   let disposed = false;
+  // The renderer shares a BrowserWindow across splash, Native startup and
+  // rollback. Only the current Native origin may control Internet tabs or
+  // receive their snapshots; sender WebContents identity alone is not enough.
+  let trustedOrigin = null;
+  const setTrustedOrigin = base => {
+    if(base===null){trustedOrigin=null;return;}
+    const url=new URL(base);
+    if(url.protocol!=='http:'||url.hostname!=='127.0.0.1'||!url.port||
+       url.username||url.password||url.pathname!=='/'||url.search||url.hash)
+      throw new TypeError('Native browser commands require a loopback host origin');
+    trustedOrigin=url.origin;
+  };
+  const isTrustedMainDocument = () => {
+    if(disposed||!trustedOrigin||window.isDestroyed()||
+       window.webContents.isDestroyed())return false;
+    try {
+      const url=new URL(window.webContents.getURL());
+      return url.origin===trustedOrigin && !url.username && !url.password;
+    } catch {return false;}
+  };
   const browserSession = session.fromPartition('persist:ordax-desktop-internet');
   const send = payload => {
-    if (!disposed && !window.isDestroyed() && !window.webContents.isDestroyed())
-      window.webContents.send(EVT,payload);
+    if(isTrustedMainDocument())window.webContents.send(EVT,payload);
   };
   const snapshot = () => ({
     supported:true,reason:'',activeTabId,
@@ -398,7 +417,12 @@ function createDesktopBrowserHost({window, ipcMain, WebContentsView, session, di
         log('Browser save dialog failed: '+error.message);
       });
   };
-  const onMessage=(e,raw)=>{handle(e,raw);handleDownloads(e,raw);};
+  const onMessage=(e,raw)=>{
+    if(!isTrustedMainDocument() || e?.sender!==window.webContents ||
+       e.senderFrame!==window.webContents.mainFrame)return;
+    handle(e,raw);
+    handleDownloads(e,raw);
+  };
   ipcMain.on(CMD,onMessage);
   const onResize=()=>{viewport=viewportBounds(requestedViewport,window);layout();};
   window.on('resize',onResize);
@@ -416,6 +440,6 @@ function createDesktopBrowserHost({window, ipcMain, WebContentsView, session, di
     }
   };
   window.once('closed',dispose);
-  return Object.freeze({dispose,getSnapshot:snapshot,hasActiveWork});
+  return Object.freeze({dispose,setTrustedOrigin,getSnapshot:snapshot,hasActiveWork});
 }
 module.exports={createDesktopBrowserHost,safeWebUrl,safeDownloadName,viewportBounds};

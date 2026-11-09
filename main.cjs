@@ -666,6 +666,7 @@ app.whenReady().then(async()=>{
       log(root===template?'Bundled OrdaX Surface':'Verified Git-managed OrdaX Surface');
       runtime=await startHost({root,template,stateDirectory:runtimeStateDirectory(userData),userData,log,fileToken,localSessionToken,nativeSessionToken,diagnosticToken,deviceProfileToken,stateToken,networkToken,observationToken,surfaceReportToken,displayToken,localAiToken,sourceSha:sourceOf(selected),
          builtAssetsRoot:nativeBuiltAssetsFor(root,template)});
+      browserHost.setTrustedOrigin(runtime.url);
       authorizeDesktopFileRequests(window,runtime.url,fileToken,localSessionToken,nativeSessionToken,deviceProfileToken,stateToken,observationToken,localAiToken,surfaceReportToken);
       await window.loadURL(nativeUrl(runtime.url,sourceOf(selected)));
       await assertNativeShellMounted(window);
@@ -681,6 +682,7 @@ app.whenReady().then(async()=>{
     } catch(error) {
       if(!selected.trial)throw error;
       log('Desktop Dev candidate health failed; reverting to known-good: '+error.message);
+      browserHost.setTrustedOrigin(null);
       rejectCandidate(userData,selected.sha);
       if(runtime?.child)stopHost(runtime.child,runtime.template);
       runtime=null;
@@ -688,6 +690,7 @@ app.whenReady().then(async()=>{
       root=fallback.root;
       runtime=await startHost({root,template,stateDirectory:runtimeStateDirectory(userData),userData,log,fileToken,localSessionToken,nativeSessionToken,diagnosticToken,deviceProfileToken,stateToken,networkToken,observationToken,surfaceReportToken,displayToken,localAiToken,sourceSha:sourceOf(fallback),
          builtAssetsRoot:nativeBuiltAssetsFor(root,template)});
+      browserHost.setTrustedOrigin(runtime.url);
       authorizeDesktopFileRequests(window,runtime.url,fileToken,localSessionToken,nativeSessionToken,deviceProfileToken,stateToken,observationToken,localAiToken,surfaceReportToken);
       await window.loadURL(nativeUrl(runtime.url,sourceOf(fallback)));
       await assertNativeShellMounted(window);
