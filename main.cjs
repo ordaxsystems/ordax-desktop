@@ -9,7 +9,8 @@ const { resolveTemplate, runtimeStateDirectory } = require('./runtime.cjs');
 const { chooseBootVersion, confirmHealthy, rejectCandidate, stageMain, desktopFirstRunComplete, createDesktopIdleActivation, createDesktopWindowIdleTracker, readState, pinPrevious, unpin } = require('./dev-update.cjs');
 const { startHost, stopHost, watchHostAfterReady, canAutoRelaunchHost } = require('./host.cjs');
 const { readDesktopWindowLayout,desktopMinimumWindowSize,
-  reconcileDesktopWindowDisplayChange,
+  reconcileDesktopWindowDisplayChange,readDesktopWindowPreference,
+  fitDesktopWindowPreference,
   createDesktopWindowLayoutPersistence } = require('./window-layout.cjs');
 const { verifyBundledNativeReceipt } = require('./native-build.cjs');
 const { isTrustedNativeRequest } = require('./native-grant-frame.cjs');
@@ -577,6 +578,7 @@ app.whenReady().then(async()=>{
     display=>display.id!==primary.id)];
   const savedWindow=readDesktopWindowLayout(userData,
     availableScreens.map(display=>display.workArea));
+  const preferredWindow=readDesktopWindowPreference(userData);
   window=new BrowserWindow({
     ...savedWindow.bounds,...desktopMinimumWindowSize(savedWindow.bounds),
     title:'OrdaX OS Desktop Dev',backgroundColor:'#101820',
@@ -585,10 +587,16 @@ app.whenReady().then(async()=>{
       sandbox:true,webSecurity:true,allowRunningInsecureContent:false},
   });
   const geometry=createDesktopWindowLayoutPersistence({
-    userData,
+    userData,preferredBounds:preferredWindow,
     getNormalBounds:()=>window.getNormalBounds(),
     isMaximized:()=>window.isMaximized(),
   });
+  // A window initially clamped by an RDP/small display must not overwrite
+  // the stored preference on its first startup resize event.
+  if(preferredWindow &&
+     ['x','y','width','height'].some(key=>
+       preferredWindow[key]!==savedWindow.bounds[key]))
+    geometry.markDisplayAdjustment(savedWindow.bounds);
   for(const event of ['move','resize','maximize','unmaximize'])
     window.on(event,geometry.schedule);
   // Respond to monitor unplug, RDP resize, DPI/work-area changes while
@@ -605,10 +613,17 @@ app.whenReady().then(async()=>{
         const primary=screen.getPrimaryDisplay();
         const areas=[primary,...screen.getAllDisplays().filter(
           display=>display.id!==primary.id)].map(display=>display.workArea);
-        const target=reconcileDesktopWindowDisplayChange(areas,
-          window.getNormalBounds());
+        const current=window.getNormalBounds();
+        const restored=geometry.isDisplayAdjusted()
+          ? fitDesktopWindowPreference(areas,geometry.getPreferredBounds())
+          : null;
+        const target=restored &&
+          ['x','y','width','height'].some(key=>restored[key]!==current[key])
+          ? restored : reconcileDesktopWindowDisplayChange(areas,current);
         if(!target)return;
         const minimum=desktopMinimumWindowSize(target);
+        // Programmatic repositioning is not a deliberate user resize.
+        geometry.markDisplayAdjustment(target);
         window.setMinimumSize(minimum.minWidth,minimum.minHeight);
         window.setBounds(target,false);
         geometry.schedule();
