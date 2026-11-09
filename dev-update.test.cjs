@@ -5,6 +5,14 @@ const { spawnSync } = require('node:child_process');
 const { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync, readdirSync, statSync, symlinkSync, lstatSync } = require('node:fs');
 const { join } = require('node:path');
 const { tmpdir } = require('node:os');
+// Detached Desktop tests use the immutable OS distribution authority mounted
+// by CI; the repository itself must never ship a second authority contract.
+// Set this test-only development locator before runtime.cjs loads its policy.
+const osCheckout=join(__dirname,'.deps','ordax-os');
+if(existsSync(join(osCheckout,'docs','contracts','distribution-profiles.json'))){
+  process.env.ORDAX_DESKTOP_LOCAL_DEV='1';
+  process.env.ORDAX_DESKTOP_OS_CHECKOUT=osCheckout;
+}
 const { OFFICIAL_REMOTE } = require('./runtime.cjs');
 const { compiledBundleSha256 } = require('./native-build.cjs');
 const { git } = require('./checkout.cjs');
