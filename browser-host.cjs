@@ -119,12 +119,25 @@ function createDesktopBrowserHost({window, ipcMain, WebContentsView, session, di
   // 'done' event may arrive later (or never after its WebContents closes).
   const cancelDownload=(id,record)=>{
     if(downloads.get(id)!==record ||
-       !['pending','approving','downloading'].includes(record.phase))return false;
-    record.phase='cancelled';
-    downloads.delete(id);
+       !['pending','approving','downloading','cancel-failed'].includes(record.phase))return false;
+    // If Chromium refuses cancellation, keep the transfer counted as active:
+    // losing the done receipt must never authorize an unsafe Desktop restart.
+    record.phase='cancelling';
     try{record.item.cancel();}
-    catch(error){log('Browser download cancellation failed: '+error.message);}
-    downloadEvent(id,record.fileName,'cancelled');
+    catch(error){
+      if(downloads.get(id)===record){
+        record.phase='cancel-failed';
+        log('Browser download cancellation failed: '+error.message);
+      }
+      return false;
+    }
+    // Electron may emit 'done' synchronously inside cancel(); the event owns
+    // the terminal receipt in that case, and no second event may be sent.
+    if(downloads.get(id)===record){
+      record.phase='cancelled';
+      downloads.delete(id);
+      downloadEvent(id,record.fileName,'cancelled');
+    }
     return true;
   };
   const onDownload = (event,item,contents) => {
