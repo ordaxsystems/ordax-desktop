@@ -352,3 +352,23 @@ test('Desktop bridge remains a preload-only port on canonical Native; no privile
   assert.ok(!preload.includes('nodeIntegration:true'));
   assert.equal(viewportBounds({visible:true,x:10,y:0,width:2000,height:2000},{getContentBounds:()=>({width:900,height:700})}).width,890);
 });
+
+test('browser viewport restores its requested size after a temporary Windows or RDP shrink',async t=>{
+  const f=fixture();t.after(()=>f.host.dispose());
+  f.post({type:'tab.open',tabId:'tab-rdp',url:'about:blank'});
+  await Promise.resolve();
+  const view=View.all[0];
+  f.post({type:'viewport.set',viewport:{visible:true,x:24,y:50,width:800,height:450}});
+  assert.deepEqual(view.bounds,{x:24,y:50,width:800,height:450});
+  f.window.getContentBounds=()=>({width:480,height:350});
+  f.window.emit('resize');
+  assert.deepEqual(view.bounds,{x:24,y:50,width:456,height:300});
+  f.window.getContentBounds=()=>({width:1000,height:700});
+  f.window.emit('resize');
+  assert.deepEqual(view.bounds,{x:24,y:50,width:800,height:450},
+    'a temporary clamp must not overwrite the original viewport request');
+  f.post({type:'viewport.set',viewport:{visible:false,x:24,y:50,width:800,height:450}});
+  f.window.emit('resize');
+  assert.deepEqual(view.bounds,{x:0,y:0,width:0,height:0},
+    'an intentionally hidden browser must remain hidden after resize');
+});
