@@ -221,4 +221,5 @@ jobs:
       # Do not create duplicate draft releases on PR or main pushes.
       publish_dev_release: false
     permissions:
-      contents: read
+      # Required by the pinned reusable OS workflow, even with publish disabled.
+      contents: write
