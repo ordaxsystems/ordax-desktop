@@ -488,3 +488,38 @@ test('muted media playback protects the Desktop updater until every player stops
   f.post({type:'tab.close',tabId:'tab-muted'});
   assert.equal(f.host.hasActiveWork(),false,'closed tab does not block the next update');
 });
+
+
+test('Electron 40 page links and redirects use their event URL without weakening protocol guards',async t=>{
+  const f=fixture();t.after(()=>f.host.dispose());
+  f.post({type:'tab.open',tabId:'tab-links',url:'https://example.com/'});
+  await Promise.resolve();
+  const wc=View.all[0].webContents;
+  const attempt=(name,url,legacyUrl)=>{
+    let prevented=0;
+    const details={url,preventDefault(){prevented++;}};
+    wc.emit(name,details,legacyUrl);
+    return prevented;
+  };
+  for(const event of ['will-navigate','will-redirect']){
+    assert.equal(attempt(event,'https://www.example.com/page'),0,
+      event+' must allow modern HTTPS page navigation');
+    assert.equal(attempt(event,'http://example.net/'),0,
+      event+' must allow normal HTTP links');
+    assert.equal(attempt(event,'https://user:secret@example.net/'),1,
+      event+' must reject embedded credentials');
+    assert.equal(attempt(event,'file:///C:/private/secret.txt'),1,
+      event+' must reject local file access');
+    assert.equal(attempt(event,'javascript:alert(1)'),1,
+      event+' must reject page-supplied scripts');
+    assert.equal(attempt(event,undefined),1,
+      event+' must fail closed on missing navigation URL');
+    assert.equal(attempt(event,'file:///C:/secret','https://safe.example/'),1,
+      event+' must not use a legacy URL to override unsafe modern metadata');
+    let rejected=0;
+    wc.emit(event,{preventDefault(){rejected++;}},'https://legacy.example/');
+    assert.equal(rejected,0,event+' must accept an older Electron event signature');
+    wc.emit(event,{preventDefault(){rejected++;}},'file:///C:/secret.txt');
+    assert.equal(rejected,1,event+' must reject unsafe old-style events');
+  }
+});

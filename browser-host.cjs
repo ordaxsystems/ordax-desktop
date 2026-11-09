@@ -193,8 +193,15 @@ function createDesktopBrowserHost({window, ipcMain, WebContentsView, session, di
     for(const event of ['did-start-navigation','did-navigate','did-navigate-in-page'])
       wc.on(event,()=>{if(tabs.get(id)===view)invalidatePage(id,wc);});
     wc.setWindowOpenHandler(()=>({action:'deny'}));
-    wc.on('will-navigate',(event,next)=>{if(!safeWebUrl(next,{blank:true}))event.preventDefault();});
-    wc.on('will-redirect',(event,next)=>{if(!safeWebUrl(next,{blank:true}))event.preventDefault();});
+    // Electron 40 puts the URL in the navigation Event itself; the second
+    // argument is deprecated. Read the modern contract first, while accepting
+    // the older signature used by already-installed development shells.
+    const guardNavigation=(event,legacyUrl)=>{
+      const target=typeof event?.url==='string'?event.url:legacyUrl;
+      if(!safeWebUrl(target,{blank:true}))event.preventDefault();
+    };
+    wc.on('will-navigate',guardNavigation);
+    wc.on('will-redirect',guardNavigation);
     for(const event of ['did-start-loading','did-stop-loading','did-navigate','did-navigate-in-page','page-title-updated'])
       wc.on(event,()=>publish());
     tabs.set(id,view);
