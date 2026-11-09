@@ -588,3 +588,50 @@ test('popup handler fails closed for unsafe schemes, POST bodies, closed tabs an
   handler({url:'https://example.com/late',disposition:'new-window'});
   assert.equal(f.host.getSnapshot().tabs.length,count,'a closed origin cannot spawn tabs');
 });
+
+test('synchronous download completion during save path never resumes or emits stale downloading',async t=>{
+  const f=fixture();t.after(()=>f.host.dispose());
+  f.post({type:'tab.open',tabId:'tab-fast-path',url:'https://example.com'});
+  await Promise.resolve();
+  const item=new EventEmitter();
+  let resumed=0;
+  item.getFilename=()=> 'tiny.txt';
+  item.pause=()=>{};
+  item.cancel=()=>{};
+  item.setSavePath=()=>item.emit('done',{},'completed');
+  item.resume=()=>{resumed++;};
+  f.browserSession.emit('will-download',{preventDefault(){throw Error('unexpected rejection')}},
+    item,View.all[0].webContents);
+  const pending=f.ui.sent.map(x=>x.value).find(x=>x.type==='browser-download'&&x.status==='pending');
+  assert.equal(f.host.hasActiveWork(),true);
+  f.dialog.showSaveDialog=async()=>({canceled:false,filePath:'C:\\\\Users\\\\Dev\\\\tiny.txt'});
+  f.post({type:'download.approve',id:pending.id});
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(resumed,0,'a completed transfer cannot be resumed');
+  assert.equal(f.host.hasActiveWork(),false,'terminal event releases the update gate');
+  assert.deepEqual(f.ui.sent.map(x=>x.value).filter(x=>x.id===pending.id).map(x=>x.status),
+    ['pending','saved'],'a stale downloading event cannot overwrite a saved receipt');
+});
+
+test('synchronous completion during resume leaves terminal receipt last',async t=>{
+  const f=fixture();t.after(()=>f.host.dispose());
+  f.post({type:'tab.open',tabId:'tab-fast-resume',url:'https://example.com'});
+  await Promise.resolve();
+  const item=new EventEmitter();
+  let resumed=0;
+  item.getFilename=()=> 'instant.txt';
+  item.pause=()=>{};
+  item.cancel=()=>{};
+  item.setSavePath=()=>{};
+  item.resume=()=>{resumed++;item.emit('done',{},'completed');};
+  f.browserSession.emit('will-download',{preventDefault(){throw Error('unexpected rejection')}},
+    item,View.all[0].webContents);
+  const pending=f.ui.sent.map(x=>x.value).find(x=>x.type==='browser-download'&&x.status==='pending');
+  f.dialog.showSaveDialog=async()=>({canceled:false,filePath:'C:\\\\Users\\\\Dev\\\\instant.txt'});
+  f.post({type:'download.approve',id:pending.id});
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(resumed,1);
+  assert.equal(f.host.hasActiveWork(),false);
+  assert.deepEqual(f.ui.sent.map(x=>x.value).filter(x=>x.id===pending.id).map(x=>x.status),
+    ['pending','saved'],'completed download cannot regress to downloading');
+});
