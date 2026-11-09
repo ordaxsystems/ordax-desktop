@@ -82,7 +82,15 @@ function navigationPolicy() {
   const external=url=>{
     try {
       const target=new URL(url);
-      if(target.protocol==='https:') shell.openExternal(target.href);
+      if(target.protocol!=='https:')return;
+      // Electron returns a Promise here. Windows can reject URL association
+      // or the shell launch; don't let that rejection crash the Native host.
+      try {
+        void Promise.resolve(shell.openExternal(target.href))
+          .catch(error=>log('System browser launch failed: '+String(error?.message??error)));
+      }catch(error){
+        log('System browser launch failed: '+String(error?.message??error));
+      }
     } catch { /* Unsafe navigation stays blocked */ }
   };
   const guardNavigation=(event,legacyUrl,{redirect=false}={})=>{

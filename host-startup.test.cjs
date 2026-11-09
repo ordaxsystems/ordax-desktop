@@ -97,6 +97,41 @@ test('Native navigation installs before boot, blocks redirects and follows rollb
 });
 
 
+test('Native external link failures are logged without unhandled Electron promises',async()=>{
+  const source=readFileSync(join(__dirname,'main.cjs'),'utf8');
+  const begin=source.indexOf('function navigationPolicy() {');
+  const end=source.indexOf('\nfunction menu(userData) {',begin);
+  assert.ok(begin>0 && end>begin);
+  const logs=[],handlers=new Map();
+  let popupHandler;
+  const webContents={
+    getURL:()=> 'http://127.0.0.1:43123/system/composition/native/index.html',
+    isDestroyed:()=>false,
+    on:(name,listener)=>handlers.set(name,listener),
+    setWindowOpenHandler:handler=>{popupHandler=handler;},
+  };
+  let calls=0;
+  const create=runInNewContext('('+source.slice(begin,end).trim()+')',{
+    URL,window:{webContents},log:msg=>logs.push(msg),
+    shell:{openExternal:()=>{
+      calls++;
+      return Promise.reject(Error('No HTTPS browser association'));
+    }},
+  });
+  create().setTrustedOrigin('http://127.0.0.1:43123');
+  assert.equal(popupHandler({url:'https://docs.example.com/'}).action,'deny');
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(calls,1);
+  assert.ok(logs.some(line=>line.includes('System browser launch failed: No HTTPS browser association')),
+    'a rejected shell Promise must have a handled diagnostic');
+  let blocked=0;
+  handlers.get('will-redirect')({
+    url:'https://other.example.com/',isMainFrame:true,preventDefault(){blocked++;},
+  });
+  assert.equal(blocked,1);
+  assert.equal(calls,1,'HTTP redirect never opens external browser');
+});
+
 test('Native Surface startup failure releases resources without losing unconfirmed owned process',()=>{
   const source=readFileSync(join(__dirname,'main.cjs'),'utf8');
   const begin=source.indexOf('function releaseFailedNativeStartup(');
