@@ -523,3 +523,51 @@ test('Electron 40 page links and redirects use their event URL without weakening
     assert.equal(rejected,1,event+' must reject unsafe old-style events');
   }
 });
+
+test('target=_blank links open sandboxed tabs without creating privileged windows',async t=>{
+  const f=fixture();t.after(()=>f.host.dispose());
+  f.post({type:'tab.open',tabId:'tab-origin',url:'https://example.com/'});
+  await Promise.resolve();
+  const parent=View.all[0];
+  const popup=parent.webContents.popupHandler;
+  assert.equal(popup({url:'https://docs.example.com/article',disposition:'new-window'}).action,'deny');
+  await Promise.resolve();
+  assert.equal(f.host.getSnapshot().tabs.length,2);
+  assert.equal(f.host.getSnapshot().activeTabId,f.host.getSnapshot().tabs[1].id,
+    'foreground link activates its new OrdaX tab');
+  const child=View.all[1];
+  assert.equal(child.webContents.url,'https://docs.example.com/article');
+  assert.equal(child.options.webPreferences.sandbox,true);
+  assert.equal(child.options.webPreferences.nodeIntegration,false);
+  assert.equal(child.options.webPreferences.contextIsolation,true);
+  assert.equal(child.options.webPreferences.partition,'persist:ordax-desktop-internet');
+  assert.equal(child.webContents.popupHandler({url:'file:///C:/secret.txt'}).action,'deny');
+  assert.equal(f.host.getSnapshot().tabs.length,2,'unsafe popup cannot create new tabs');
+  assert.equal(popup({url:'https://docs.example.com/background',disposition:'background-tab'}).action,'deny');
+  await Promise.resolve();
+  assert.equal(f.host.getSnapshot().tabs.length,3);
+  assert.equal(f.host.getSnapshot().activeTabId,f.host.getSnapshot().tabs[1].id,
+    'background link must not steal focus');
+});
+
+test('popup handler fails closed for unsafe schemes, POST bodies, closed tabs and tab limits',async t=>{
+  const f=fixture();t.after(()=>f.host.dispose());
+  f.post({type:'tab.open',tabId:'tab-origin',url:'https://example.com'});
+  await Promise.resolve();
+  const handler=View.all[0].webContents.popupHandler;
+  for(const details of [undefined,{}, {url:'javascript:alert(1)'},
+    {url:'file:///C:/Users/Dev/private'},
+    {url:'https://person:secret@example.com/'},
+    {url:'https://example.com/upload',postBody:{data:[{bytes:'data'}]}}]){
+    assert.equal(handler(details).action,'deny');
+  }
+  assert.equal(f.host.getSnapshot().tabs.length,1,'untrusted popup metadata cannot create tabs');
+  for(let i=0;i<30;i++){
+    assert.equal(handler({url:'https://example.com/page/'+i,disposition:'new-window'}).action,'deny');
+  }
+  assert.equal(f.host.getSnapshot().tabs.length,16,'popup tab count stays bounded');
+  f.post({type:'tab.close',tabId:'tab-origin'});
+  const count=f.host.getSnapshot().tabs.length;
+  handler({url:'https://example.com/late',disposition:'new-window'});
+  assert.equal(f.host.getSnapshot().tabs.length,count,'a closed origin cannot spawn tabs');
+});

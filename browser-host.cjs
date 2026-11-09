@@ -167,7 +167,7 @@ function createDesktopBrowserHost({window, ipcMain, WebContentsView, session, di
   browserSession.setPermissionRequestHandler((_contents,_permission,callback)=>callback(false));
   browserSession.setPermissionCheckHandler?.(()=>false);
 
-  const open = (id,url='') => {
+  const open = (id,url='',{background=false}={}) => {
     if (!TAB_ID.test(id) || tabs.has(id) || tabs.size>=MAX_TABS) return;
     const target=safeWebUrl(url,{blank:true});
     if (!target) return;
@@ -192,7 +192,19 @@ function createDesktopBrowserHost({window, ipcMain, WebContentsView, session, di
     // may resolve executeJavaScript only after the next document is active.
     for(const event of ['did-start-navigation','did-navigate','did-navigate-in-page'])
       wc.on(event,()=>{if(tabs.get(id)===view)invalidatePage(id,wc);});
-    wc.setWindowOpenHandler(()=>({action:'deny'}));
+    wc.setWindowOpenHandler(details=>{
+      // Chromium reports _blank links here. Keep the untrusted page out of
+      // BrowserWindow creation: open only a bounded, sandboxed OrdaX tab.
+      const target=safeWebUrl(details?.url);
+      if(!disposed && tabs.get(id)===view && target &&
+         details?.postBody == null && tabs.size<MAX_TABS){
+        open('tab-popup-'+randomBytes(8).toString('hex'),target,{
+          background:details.disposition==='background-tab',
+        });
+      }
+      // Never allow the remote renderer to construct an Electron window.
+      return {action:'deny'};
+    });
     // Electron 40 puts the URL in the navigation Event itself; the second
     // argument is deprecated. Read the modern contract first, while accepting
     // the older signature used by already-installed development shells.
@@ -206,7 +218,7 @@ function createDesktopBrowserHost({window, ipcMain, WebContentsView, session, di
       wc.on(event,()=>publish());
     tabs.set(id,view);
     window.contentView.addChildView(view);
-    activeTabId=id;
+    if(!background || activeTabId===null)activeTabId=id;
     layout();
     void wc.loadURL(target).catch(error=>{log('Browser navigation failed: '+error.message);publish();});
     publish();
