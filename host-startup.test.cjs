@@ -70,6 +70,41 @@ test('Native navigation policy honors Electron 40 event URLs and blocks untruste
   ],'popups cannot create privileged windows or open unsafe schemes');
 });
 
+test('Native Surface startup failure releases resources without losing unconfirmed owned process',()=>{
+  const source=readFileSync(join(__dirname,'main.cjs'),'utf8');
+  const begin=source.indexOf('function releaseFailedNativeStartup(');
+  const end=source.indexOf('\nfunction monitorNativeHost(',begin);
+  assert.ok(begin>0&&end>begin,'one canonical cleanup function must be wired before Native watchdog');
+  const release=runInNewContext('('+source.slice(begin,end).trim()+')');
+  const calls=[],logs=[];
+  const child={pid:28736},currentHost={child,template:'verified-runtime-template'};
+  const ports=()=>({
+    currentHost,browser:{dispose:()=>calls.push('dispose')},
+    disarm:()=>calls.push('disarm'),
+    stop:(pid,template)=>{calls.push('stop');assert.equal(pid,child);
+      assert.equal(template,currentHost.template);return true;},
+    log:message=>logs.push(message),
+  });
+  assert.equal(release(ports()),null,'confirmed stop releases the exact Native process');
+  assert.deepEqual(calls,['disarm','dispose','stop']);
+  calls.length=0;
+  const failed={...ports(),stop:()=>{calls.push('stop');return false}};
+  assert.equal(release(failed),currentHost,'unconfirmed termination must remain owned for app quit');
+  assert.deepEqual(calls,['disarm','dispose','stop']);
+  assert.ok(logs.some(m=>m.includes('keeping exact PID')));
+  calls.length=0;
+  const throwing={...ports(),browser:{dispose:()=>{calls.push('dispose');throw Error('broken renderer');}}};
+  assert.equal(release(throwing),null,'failed browser cleanup must not skip owned host termination');
+  assert.deepEqual(calls,['disarm','dispose','stop']);
+  assert.ok(logs.some(m=>m.includes('Internet host cleanup failed')));
+  calls.length=0;
+  assert.equal(release({...ports(),currentHost:null}),null);
+  assert.deepEqual(calls,['disarm','dispose'],'no child must not trigger process stop');
+  // The actual startup catch must route failures through this ownership policy.
+  assert.match(source,/catch\(error\)\{\s*\/\/ A started host is not a healthy Surface;[\s\S]*?runtime=releaseFailedNativeStartup\(\{/);
+  assert.match(source,/browserHost=null;\s*disarmNativeHostExit=null;\s*log\('Startup failed:/);
+});
+
 test('cold Native HTTP probe waits for delayed but valid response rather than canceling after 1.2 seconds',async t=>{
   const server=http.createServer((request,response)=>{
     assert.equal(request.url,'/system/composition/native/index.html');
