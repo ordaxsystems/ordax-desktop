@@ -478,8 +478,12 @@ test('muted media playback protects the Desktop updater until every player stops
   wc.emit('media-paused');
   assert.equal(f.host.hasActiveWork(),false,'all paused players release the update gate');
   wc.emit('media-started-playing');
-  wc.emit('did-start-navigation');
-  assert.equal(f.host.hasActiveWork(),false,'previous document cannot leave stale media activity');
+  wc.emit('did-start-navigation',{isMainFrame:true,isSameDocument:true});
+  assert.equal(f.host.hasActiveWork(),true,'SPA route changes must preserve playback protection');
+  wc.emit('did-start-navigation',{isMainFrame:false,isSameDocument:false});
+  assert.equal(f.host.hasActiveWork(),true,'another frame cannot erase active media state');
+  wc.emit('did-start-navigation',{isMainFrame:true,isSameDocument:false});
+  assert.equal(f.host.hasActiveWork(),false,'new main document resets the previous media state');
   wc.emit('media-started-playing');
   f.post({type:'tab.close',tabId:'tab-muted'});
   assert.equal(f.host.hasActiveWork(),false,'closed tab does not block the next update');
