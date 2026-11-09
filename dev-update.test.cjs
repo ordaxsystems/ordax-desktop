@@ -619,6 +619,37 @@ test('second fast-forward stages separately; explicit rollback pins previous com
   assert.equal(unpin(f.userData).pinnedSha,null);
 });
 
+test('Git staging never overrides a rejection recorded during asynchronous candidate build',async t=>{
+  for(const type of ['same-SHA','concurrent-other-SHA']){
+    const f=fixture(t);
+    const rejected=type==='same-SHA'?f.first:'f'.repeat(40);
+    let builds=0;
+    const result=await stageMain({
+      userData:f.userData,template:f.template,runGit:f.offlineGit,
+      buildCandidate:async (...args)=>{
+        builds++;
+        await f.offlineBuild(...args);
+        // Simulate a boot health rejection or rollback written while this
+        // independent source transaction was still being compiled.
+        writeState(f.userData,{...readState(f.userData),rejectedSha:rejected});
+      },
+    });
+    assert.equal(builds,1,'verified candidate was built before the concurrent decision');
+    assert.equal(result.status,type==='same-SHA'?'rejected':'conflict');
+    assert.equal(readState(f.userData).pendingSha,null,
+      'staging must not reoffer a candidate after a concurrent rejection');
+    assert.equal(readState(f.userData).rejectedSha,rejected,
+      'a newer user/health verdict cannot be overwritten');
+    assert.equal(existsSync(versionRoot(f.userData,f.first)),true,
+      'a verified candidate may remain on disk without being promoted');
+    if(type==='same-SHA'){
+      const next=await stageMain({userData:f.userData,template:f.template,
+        runGit:f.offlineGit,buildCandidate:()=>{throw Error('rejected SHA must not rebuild')}});
+      assert.equal(next.status,'rejected','next poll must still respect rejected source');
+    }
+  }
+});
+
 test('first-run OOBE holds a verified pending version without rejecting or activating it',async t=>{
   const f=fixture(t);
   assert.equal((await stageMain({userData:f.userData,template:f.template,

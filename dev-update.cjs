@@ -549,7 +549,12 @@ async function stageMain({ userData, template, log = () => {}, remote = OFFICIAL
   // Re-read state after expensive I/O: another updater may have changed the
   // pointer; do not trample rollback pins or concurrent pending candidates.
   const latest = readState(userData);
-  if (latest.pinnedSha || latest.pendingSha || latest.activeSha !== state.activeSha) {
+  // A health check or the user may have rejected this source during a long
+  // Git clone/build. Verified bits must not overwrite a newer verdict.
+  if (latest.rejectedSha === remoteSha) return {status:'rejected',sha:remoteSha};
+  if (latest.pinnedSha || latest.pendingSha ||
+      latest.activeSha !== state.activeSha ||
+      latest.rejectedSha !== state.rejectedSha) {
     return {status:'conflict'};
   }
   writeState(userData,{...latest,pendingSha:remoteSha,attemptedSha:null,
