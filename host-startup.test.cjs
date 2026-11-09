@@ -163,7 +163,8 @@ test('Native Surface startup failure releases resources without losing unconfirm
   assert.equal(release({...ports(),currentHost:null}),null);
   assert.deepEqual(calls,['disarm','dispose'],'no child must not trigger process stop');
   // The actual startup catch must route failures through this ownership policy.
-  assert.match(source,/catch\(error\)\{\s*\/\/ A started host is not a healthy Surface;[\s\S]*?runtime=releaseFailedNativeStartup\(\{/);
+  assert.match(source,/catch\(error\)\{\s*\/\/ Revoke navigation and privileged Internet commands[\s\S]*?bindNativeOrigin\(null\);\s*\/\/ A started host is not a healthy Surface;[\s\S]*?runtime=releaseFailedNativeStartup\(\{/,
+    'revoke all Native/Internet grants before releasing the failed host');
   assert.match(source,/browserHost=null;\s*disarmNativeHostExit=null;\s*log\('Startup failed:/);
 });
 
