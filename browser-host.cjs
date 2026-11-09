@@ -25,8 +25,13 @@ function safeWebUrl(value, { blank = false } = {}) {
 
 function safeDownloadName(value) {
   const name = basename(String(value || '').replaceAll('\\', '/'))
-    .replace(/[^a-zA-Z0-9 ._-]/g,'_').slice(0,120);
-  return /^[a-zA-Z0-9]/.test(name) && name !== '.' && name !== '..' ? name : 'download';
+    .replace(/[^a-zA-Z0-9 ._-]/g,'_').slice(0,120).replace(/[ .]+$/g,'');
+  if (!/^[a-zA-Z0-9]/.test(name)) return 'download';
+  // Windows reserves these device names even when followed by an extension.
+  // Keep the original extension rather than making a failed Save dialog likely.
+  const stem=name.split('.')[0].trimEnd();
+  return /^(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/i.test(stem)
+    ? 'download-'+name : name;
 }
 
 function validViewportRequest(value) {
@@ -155,10 +160,10 @@ function createDesktopBrowserHost({window, ipcMain, WebContentsView, session, di
     if (downloads.size >= 8) {event.preventDefault();return;}
     const id='download-'+randomBytes(8).toString('hex');
     const fileName=safeDownloadName(item.getFilename());
-    item.pause();
     const record={item,contents,fileName,phase:'pending'};
     downloads.set(id,record);
-    downloadEvent(id,fileName,'pending');
+    // Register the terminal listener BEFORE requesting pause: Chromium can
+    // finish or cancel a tiny transfer synchronously while pausing.
     item.on('done',(_event,state)=>{
       // A cancelled transfer is already forgotten; never publish twice.
       if(downloads.get(id)!==record)return;
@@ -166,6 +171,16 @@ function createDesktopBrowserHost({window, ipcMain, WebContentsView, session, di
       downloads.delete(id);
       downloadEvent(id,fileName,state==='completed'?'saved':state==='cancelled'?'cancelled':'failed');
     });
+    downloadEvent(id,fileName,'pending');
+    try { item.pause(); }
+    catch(error) {
+      // A failed pause must not leave an unapproved transfer running. Keep
+      // its update gate closed if Chromium also refuses cancellation.
+      if(downloads.get(id)===record){
+        cancelDownload(id,record);
+        log('Browser download could not be paused: '+error.message);
+      }
+    }
   };
   browserSession.on('will-download',onDownload);
   browserSession.setPermissionRequestHandler((_contents,_permission,callback)=>callback(false));
