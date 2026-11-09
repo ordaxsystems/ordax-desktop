@@ -29,13 +29,17 @@ function safeDownloadName(value) {
   return /^[a-zA-Z0-9]/.test(name) && name !== '.' && name !== '..' ? name : 'download';
 }
 
+function validViewportRequest(value) {
+  if (!value || typeof value !== 'object' || value.visible !== true) return false;
+  const nums=['x','y','width','height'].map(key=>value[key]);
+  return nums.every(Number.isSafeInteger) &&
+    value.x>=0 && value.y>=0 && value.width>0 && value.height>0;
+}
 function viewportBounds(value, window) {
-  if (!value || typeof value !== 'object' || value.visible !== true) return null;
+  if (!validViewportRequest(value)) return null;
   const bounds = window.getContentBounds();
-  const nums = ['x','y','width','height'].map(key => value[key]);
-  if (nums.some(n => !Number.isFinite(n) || !Number.isInteger(n))) return null;
-  let [x,y,width,height] = nums;
-  if (x < 0 || y < 0 || width < 1 || height < 1 || x > bounds.width || y > bounds.height) return null;
+  let {x,y,width,height}=value;
+  if (x >= bounds.width || y >= bounds.height) return null;
   width = Math.min(width,bounds.width-x);
   height = Math.min(height,bounds.height-y);
   if (width < 1 || height < 1) return null;
@@ -257,12 +261,15 @@ function createDesktopBrowserHost({window, ipcMain, WebContentsView, session, di
     if(typeof type!=='string')return;
     if(type==='snapshot.request'){publish();return;}
     if(type==='viewport.set'){
-      const next=viewportBounds(command.viewport,window);
-      // Invalid or hidden requests remain hidden; never resurrect them on resize.
-      requestedViewport=next?{
+      // Validate the requested rectangle independently of the *current*
+      // window dimensions. During RDP resize it may temporarily be entirely
+      // offscreen; discarding it would prevent recovery on a later resize.
+      const valid=validViewportRequest(command.viewport);
+      requestedViewport=valid?{
         visible:true,x:command.viewport.x,y:command.viewport.y,
         width:command.viewport.width,height:command.viewport.height,
       }:null;
+      const next=viewportBounds(requestedViewport,window);
       viewport=next;
       layout();return;
     }
