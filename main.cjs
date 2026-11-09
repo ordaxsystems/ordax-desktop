@@ -68,12 +68,16 @@ function navigationPolicy(base) {
       if(target.protocol==='https:') shell.openExternal(target.href);
     } catch { /* Unsafe navigation stays blocked */ }
   };
-  window.webContents.on('will-navigate',(event,url)=>{
+  window.webContents.on('will-navigate',(event,legacyUrl)=>{
+    // Electron 40 provides the destination on the event itself. Falling
+    // back to the former (event, url) contract keeps older Dev installs
+    // compatible without treating a missing URL as a trusted navigation.
+    const destination=typeof event?.url==='string'?event.url:legacyUrl;
     try {
-      const target=new URL(url);
+      const target=new URL(destination);
       if(target.origin===allowed.origin) return;
     } catch {}
-    event.preventDefault();external(url);
+    event.preventDefault();external(destination);
   });
   window.webContents.setWindowOpenHandler(({url})=>{
     external(url);return {action:'deny'};

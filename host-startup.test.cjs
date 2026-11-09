@@ -2,6 +2,7 @@
 const test=require('node:test');
 const assert=require('node:assert/strict');
 const http=require('node:http');
+const {runInNewContext}=require('node:vm');
 const {isReady,freePort,startHost,stopHost}=require('./host.cjs');
 const {mkdtempSync,mkdirSync,writeFileSync,readFileSync,rmSync}=require('node:fs');
 const {join}=require('node:path');
@@ -17,6 +18,58 @@ test('installed Desktop awaits its splash navigation before Native host startup'
   assert.ok(awaitedSplash>0&&nativeStart>awaitedSplash,
     'Native navigation must not cancel an unresolved splash load');
 });
+test('Native navigation policy honors Electron 40 event URLs and blocks untrusted schemes',()=>{
+  // Execute the exact Electron policy in isolation without launching a
+  // packaged window or inventing a parallel navigation implementation.
+  const source=readFileSync(join(__dirname,'main.cjs'),'utf8');
+  const start=source.indexOf('function navigationPolicy(base) {');
+  const end=source.indexOf('\nfunction menu(userData) {',start);
+  assert.ok(start>0 && end>start,'Native navigation owner must exist');
+  const listeners=new Map(),opened=[];
+  let popupHandler=null;
+  const webContents={
+    on:(name,listener)=>listeners.set(name,listener),
+    setWindowOpenHandler:handler=>{popupHandler=handler;},
+  };
+  const policy=runInNewContext('('+source.slice(start,end).trim()+')',{
+    URL,window:{webContents},shell:{openExternal:url=>opened.push(url)},
+  });
+  policy('http://127.0.0.1:43123');
+  const navigate=(url,legacyUrl)=>{
+    let rejected=0;
+    listeners.get('will-navigate')({
+      url,preventDefault(){rejected++;},
+    },legacyUrl);
+    return rejected;
+  };
+  assert.equal(navigate('http://127.0.0.1:43123/system/composition/native/home'),0,
+    'same-origin Native links must not be blocked');
+  assert.equal(navigate('https://docs.example.com/manual'),1,
+    'external HTTPS links must never navigate privileged Native renderer');
+  assert.deepEqual(opened,['https://docs.example.com/manual'],
+    'external HTTPS opens in the system browser');
+  assert.equal(navigate('http://127.0.0.1:43124/'),1,
+    'another loopback port must not acquire Native privileges');
+  assert.equal(navigate('file:///C:/Users/user/private.txt'),1);
+  assert.equal(navigate('javascript:alert(1)'),1);
+  assert.equal(navigate(undefined),1,'unknown destination must fail closed');
+  assert.deepEqual(opened,['https://docs.example.com/manual'],
+    'unsafe URLs never reach the operating system');
+  assert.equal(navigate('file:///C:/secret','http://127.0.0.1:43123/'),1,
+    'modern destination takes precedence over a stale legacy argument');
+  assert.equal(navigate(undefined,'http://127.0.0.1:43123/settings'),0,
+    'the older Electron tuple remains compatible');
+  assert.equal(navigate(undefined,'https://help.example.com/'),1);
+  assert.deepEqual(opened,['https://docs.example.com/manual','https://help.example.com/']);
+  assert.equal(popupHandler({url:'https://help.example.com/new'}).action,'deny');
+  assert.equal(popupHandler({url:'file:///C:/secret'}).action,'deny');
+  assert.deepEqual(opened,[
+    'https://docs.example.com/manual',
+    'https://help.example.com/',
+    'https://help.example.com/new',
+  ],'popups cannot create privileged windows or open unsafe schemes');
+});
+
 test('cold Native HTTP probe waits for delayed but valid response rather than canceling after 1.2 seconds',async t=>{
   const server=http.createServer((request,response)=>{
     assert.equal(request.url,'/system/composition/native/index.html');
