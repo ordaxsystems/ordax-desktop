@@ -364,9 +364,15 @@ function createDesktopBrowserHost({window, ipcMain, WebContentsView, session, di
         if(result.canceled||!result.filePath){cancelDownload(command.id,record);return;}
         try {
           record.item.setSavePath(result.filePath);
-          record.item.resume();
+          // A tiny transfer may emit 'done' while Chromium accepts the save
+          // path. Never resume or report an already completed item.
+          if(downloads.get(command.id)!==record || record.phase!=='approving')return;
           record.phase='downloading';
-          downloadEvent(command.id,record.fileName,'downloading');
+          record.item.resume();
+          // resume() may synchronously emit 'done' as well. The terminal
+          // receipt must stay last, and the idle/update gate already released.
+          if(downloads.get(command.id)===record && record.phase==='downloading')
+            downloadEvent(command.id,record.fileName,'downloading');
         } catch(error) {
           cancelDownload(command.id,record);
           log('Browser download could not be saved: '+error.message);
