@@ -5,6 +5,16 @@ const { spawnSync } = require('node:child_process');
 const { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync, readdirSync, statSync, symlinkSync, lstatSync } = require('node:fs');
 const { join } = require('node:path');
 const { tmpdir } = require('node:os');
+// Detached Desktop tests use the immutable OS distribution authority mounted
+// by CI; the repository itself must never ship a second authority contract.
+// Set this test-only development locator before runtime.cjs loads its policy.
+const osCheckout=join(__dirname,'.deps','ordax-os');
+const canonicalOs=existsSync(join(osCheckout,'docs','contracts','distribution-profiles.json'))
+  ? osCheckout : join(__dirname,'../..');
+if(canonicalOs===osCheckout){
+  process.env.ORDAX_DESKTOP_LOCAL_DEV='1';
+  process.env.ORDAX_DESKTOP_OS_CHECKOUT=osCheckout;
+}
 const { OFFICIAL_REMOTE } = require('./runtime.cjs');
 const { compiledBundleSha256 } = require('./native-build.cjs');
 const { git } = require('./checkout.cjs');
@@ -19,8 +29,8 @@ test('Desktop DEV Git sparse checkout includes the existing MCP candidate proof'
   assert.ok(sparseCall, 'Git sparse source manifest must remain explicit');
   assert.doesNotMatch(sparseCall[0], /'tools\/windows-desktop'/,
     'Windows compiler and Electron shell are not OS source inputs');
-  const evidence=JSON.parse(readFileSync(join(__dirname,
-    '../../docs/evidence/desktop-runtime-windows-candidate-2026-10-31.json'),'utf8'));
+  const evidence=JSON.parse(readFileSync(join(canonicalOs,
+    'docs/evidence/desktop-runtime-windows-candidate-2026-10-31.json'),'utf8'));
   assert.equal(evidence.$schema,'ordax.desktop-runtime-candidate-evidence/1');
   assert.equal(evidence.candidate.platform,'windows-amd64');
   assert.equal(evidence.candidate.signature_present,false);
@@ -240,7 +250,7 @@ test('ordax-pull Desktop activates only verified pending Git revisions during sa
 test('ordax-pull checks canonical Native First Run receipt before auto update',async t=>{
   const root=mkdtempSync(join(tmpdir(),'ordax-first-run-update-'));
   t.after(()=>rmSync(root,{recursive:true,force:true}));
-  const template=join(__dirname,'../..');
+  const template=canonicalOs;
   const dir=join(root,'native-state');
   mkdirSync(dir);
   const file=join(dir,'native-state.json');
@@ -617,6 +627,37 @@ test('second fast-forward stages separately; explicit rollback pins previous com
   assert.equal((await stageMain({userData:f.userData,template:f.template,runGit:f.offlineGit,buildCandidate:f.offlineBuild})).status,'pinned');
   assert.equal((await chooseBootVersion({userData:f.userData,template:f.template})).sha,f.first);
   assert.equal(unpin(f.userData).pinnedSha,null);
+});
+
+test('Git staging never overrides a rejection recorded during asynchronous candidate build',async t=>{
+  for(const type of ['same-SHA','concurrent-other-SHA']){
+    const f=fixture(t);
+    const rejected=type==='same-SHA'?f.first:'f'.repeat(40);
+    let builds=0;
+    const result=await stageMain({
+      userData:f.userData,template:f.template,runGit:f.offlineGit,
+      buildCandidate:async (...args)=>{
+        builds++;
+        await f.offlineBuild(...args);
+        // Simulate a boot health rejection or rollback written while this
+        // independent source transaction was still being compiled.
+        writeState(f.userData,{...readState(f.userData),rejectedSha:rejected});
+      },
+    });
+    assert.equal(builds,1,'verified candidate was built before the concurrent decision');
+    assert.equal(result.status,type==='same-SHA'?'rejected':'conflict');
+    assert.equal(readState(f.userData).pendingSha,null,
+      'staging must not reoffer a candidate after a concurrent rejection');
+    assert.equal(readState(f.userData).rejectedSha,rejected,
+      'a newer user/health verdict cannot be overwritten');
+    assert.equal(existsSync(versionRoot(f.userData,f.first)),true,
+      'a verified candidate may remain on disk without being promoted');
+    if(type==='same-SHA'){
+      const next=await stageMain({userData:f.userData,template:f.template,
+        runGit:f.offlineGit,buildCandidate:()=>{throw Error('rejected SHA must not rebuild')}});
+      assert.equal(next.status,'rejected','next poll must still respect rejected source');
+    }
+  }
 });
 
 test('first-run OOBE holds a verified pending version without rejecting or activating it',async t=>{
