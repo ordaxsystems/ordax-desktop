@@ -60,28 +60,60 @@ function status(message) {
   navigation.catch(error=>log('Desktop status page unavailable: '+String(error?.message??error)));
   return navigation;
 }
-function navigationPolicy(base) {
-  const allowed=new URL(base);
+function navigationPolicy() {
+  // Install once before any Native document loads. A provisional splash or
+  // an unverified redirect has no authority to open external applications.
+  // Electron emits 'will-redirect' separately from 'will-navigate'.
+  let allowedOrigin=null;
+  const setTrustedOrigin=base=>{
+    if(base===null){allowedOrigin=null;return;}
+    const target=new URL(base);
+    if(target.protocol!=='http:' || target.hostname!=='127.0.0.1' ||
+       !target.port || target.username || target.password ||
+       target.pathname!=='/' || target.search || target.hash)
+      throw TypeError('Native navigation requires exact loopback host origin');
+    allowedOrigin=target.origin;
+  };
+  const fromNative=()=>{
+    if(!allowedOrigin || window.webContents.isDestroyed?.())return false;
+    try{return new URL(window.webContents.getURL()).origin===allowedOrigin;}
+    catch{return false;}
+  };
   const external=url=>{
     try {
       const target=new URL(url);
-      if(target.protocol==='https:') shell.openExternal(target.href);
+      if(target.protocol!=='https:')return;
+      // Electron returns a Promise here. Windows can reject URL association
+      // or the shell launch; don't let that rejection crash the Native host.
+      try {
+        void Promise.resolve(shell.openExternal(target.href))
+          .catch(error=>log('System browser launch failed: '+String(error?.message??error)));
+      }catch(error){
+        log('System browser launch failed: '+String(error?.message??error));
+      }
     } catch { /* Unsafe navigation stays blocked */ }
   };
-  window.webContents.on('will-navigate',(event,legacyUrl)=>{
-    // Electron 40 provides the destination on the event itself. Falling
-    // back to the former (event, url) contract keeps older Dev installs
-    // compatible without treating a missing URL as a trusted navigation.
+  const guardNavigation=(event,legacyUrl,{redirect=false}={})=>{
+    if(event?.isMainFrame===false)return;
+    // Electron 40 provides the destination on the event itself. Accept the
+    // old tuple only for compatibility with earlier Dev installations.
     const destination=typeof event?.url==='string'?event.url:legacyUrl;
     try {
-      const target=new URL(destination);
-      if(target.origin===allowed.origin) return;
+      if(allowedOrigin && new URL(destination).origin===allowedOrigin)return;
     } catch {}
-    event.preventDefault();external(destination);
-  });
+    event.preventDefault();
+    // Never open a browser automatically from a server redirect, an iframe
+    // navigation or a splash/foreign document.
+    if(!redirect && fromNative())external(destination);
+  };
+  window.webContents.on('will-navigate',(event,url)=>guardNavigation(event,url));
+  window.webContents.on('will-redirect',(event,url)=>
+    guardNavigation(event,url,{redirect:true}));
   window.webContents.setWindowOpenHandler(({url})=>{
-    external(url);return {action:'deny'};
+    if(fromNative())external(url);
+    return {action:'deny'};
   });
+  return Object.freeze({setTrustedOrigin});
 }
 function menu(userData) {
   Menu.setApplicationMenu(Menu.buildFromTemplate([
@@ -626,6 +658,11 @@ app.whenReady().then(async()=>{
   });
   menu(userData);
   browserHost=createDesktopBrowserHost({window,ipcMain,WebContentsView,session,dialog,log});
+  const nativeNavigation=navigationPolicy();
+  const bindNativeOrigin=base=>{
+    browserHost.setTrustedOrigin(base);
+    nativeNavigation.setTrustedOrigin(base);
+  };
   window.webContents.on('page-title-updated',event=>{event.preventDefault();window?.setTitle('OrdaX OS Desktop Dev');});
   try{
     // Electron can reject the in-flight data: URL with ERR_ABORTED (-3)
@@ -666,7 +703,7 @@ app.whenReady().then(async()=>{
       log(root===template?'Bundled OrdaX Surface':'Verified Git-managed OrdaX Surface');
       runtime=await startHost({root,template,stateDirectory:runtimeStateDirectory(userData),userData,log,fileToken,localSessionToken,nativeSessionToken,diagnosticToken,deviceProfileToken,stateToken,networkToken,observationToken,surfaceReportToken,displayToken,localAiToken,sourceSha:sourceOf(selected),
          builtAssetsRoot:nativeBuiltAssetsFor(root,template)});
-      browserHost.setTrustedOrigin(runtime.url);
+      bindNativeOrigin(runtime.url);
       authorizeDesktopFileRequests(window,runtime.url,fileToken,localSessionToken,nativeSessionToken,deviceProfileToken,stateToken,observationToken,localAiToken,surfaceReportToken);
       await window.loadURL(nativeUrl(runtime.url,sourceOf(selected)));
       await assertNativeShellMounted(window);
@@ -682,7 +719,7 @@ app.whenReady().then(async()=>{
     } catch(error) {
       if(!selected.trial)throw error;
       log('Desktop Dev candidate health failed; reverting to known-good: '+error.message);
-      browserHost.setTrustedOrigin(null);
+      bindNativeOrigin(null);
       rejectCandidate(userData,selected.sha);
       if(runtime?.child)stopHost(runtime.child,runtime.template);
       runtime=null;
@@ -690,7 +727,7 @@ app.whenReady().then(async()=>{
       root=fallback.root;
       runtime=await startHost({root,template,stateDirectory:runtimeStateDirectory(userData),userData,log,fileToken,localSessionToken,nativeSessionToken,diagnosticToken,deviceProfileToken,stateToken,networkToken,observationToken,surfaceReportToken,displayToken,localAiToken,sourceSha:sourceOf(fallback),
          builtAssetsRoot:nativeBuiltAssetsFor(root,template)});
-      browserHost.setTrustedOrigin(runtime.url);
+      bindNativeOrigin(runtime.url);
       authorizeDesktopFileRequests(window,runtime.url,fileToken,localSessionToken,nativeSessionToken,deviceProfileToken,stateToken,observationToken,localAiToken,surfaceReportToken);
       await window.loadURL(nativeUrl(runtime.url,sourceOf(fallback)));
       await assertNativeShellMounted(window);
@@ -700,7 +737,6 @@ app.whenReady().then(async()=>{
       log('Native shell mounted and ready after rollback: '+runtime.url);
       log('Native Surface ready after rollback: '+runtime.url);
     }
-    navigationPolicy(runtime.url);
     monitorNativeHost(runtime.child);
     if(app.isPackaged) {
       idleActivation=createDesktopIdleActivation({
@@ -734,6 +770,8 @@ app.whenReady().then(async()=>{
     }
 
   }catch(error){
+    // Revoke navigation and privileged Internet commands before the splash.
+    bindNativeOrigin(null);
     // A started host is not a healthy Surface; clear its permissions and
     // stop its Native process before displaying the failure splash.
     runtime=releaseFailedNativeStartup({

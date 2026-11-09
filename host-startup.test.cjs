@@ -18,56 +18,118 @@ test('installed Desktop awaits its splash navigation before Native host startup'
   assert.ok(awaitedSplash>0&&nativeStart>awaitedSplash,
     'Native navigation must not cancel an unresolved splash load');
 });
-test('Native navigation policy honors Electron 40 event URLs and blocks untrusted schemes',()=>{
-  // Execute the exact Electron policy in isolation without launching a
-  // packaged window or inventing a parallel navigation implementation.
+test('Native navigation installs before boot, blocks redirects and follows rollback origin',()=>{
+  // Execute the canonical policy, not a duplicate test-only navigation gate.
   const source=readFileSync(join(__dirname,'main.cjs'),'utf8');
-  const start=source.indexOf('function navigationPolicy(base) {');
+  const start=source.indexOf('function navigationPolicy() {');
   const end=source.indexOf('\nfunction menu(userData) {',start);
-  assert.ok(start>0 && end>start,'Native navigation owner must exist');
-  const listeners=new Map(),opened=[];
+  assert.ok(start>0&&end>start,'single Native navigation owner must exist');
+  const handlers=new Map(),opened=[];
   let popupHandler=null;
   const webContents={
-    on:(name,listener)=>listeners.set(name,listener),
+    url:'data:text/html,starting',isDestroyed:()=>false,
+    getURL(){return this.url;},
+    on:(name,listener)=>handlers.set(name,listener),
     setWindowOpenHandler:handler=>{popupHandler=handler;},
   };
   const policy=runInNewContext('('+source.slice(start,end).trim()+')',{
     URL,window:{webContents},shell:{openExternal:url=>opened.push(url)},
   });
-  policy('http://127.0.0.1:43123');
-  const navigate=(url,legacyUrl)=>{
+  const nav=policy();
+  const navigate=(name,url,legacyUrl,main=true)=>{
     let rejected=0;
-    listeners.get('will-navigate')({
-      url,preventDefault(){rejected++;},
-    },legacyUrl);
+    handlers.get(name)({url,isMainFrame:main,preventDefault(){rejected++;}},legacyUrl);
     return rejected;
   };
-  assert.equal(navigate('http://127.0.0.1:43123/system/composition/native/home'),0,
-    'same-origin Native links must not be blocked');
-  assert.equal(navigate('https://docs.example.com/manual'),1,
-    'external HTTPS links must never navigate privileged Native renderer');
+  assert.equal(navigate('will-navigate','https://docs.example.com/preload'),1,
+    'splash must never navigate to an external page');
+  assert.equal(popupHandler({url:'https://docs.example.com/popup'}).action,'deny');
+  assert.deepEqual(opened,[],'untrusted splash may not open external applications');
+  assert.equal(navigate('will-redirect','https://docs.example.com/redirect'),1,
+    'cross-origin redirects during cold startup must be rejected');
+  assert.throws(()=>nav.setTrustedOrigin('https://example.com'),/loopback host origin/);
+  assert.throws(()=>nav.setTrustedOrigin('http://127.0.0.1:43123/path'),/loopback host origin/);
+  nav.setTrustedOrigin('http://127.0.0.1:43123');
+  assert.equal(navigate('will-redirect','http://127.0.0.1:43123/system/composition/native/index.html'),0,
+    'initial same-origin HTTP redirects remain compatible before Native load');
+  webContents.url='http://127.0.0.1:43123/system/composition/native/index.html';
+  assert.equal(navigate('will-navigate','http://127.0.0.1:43123/settings'),0);
+  assert.equal(navigate('will-navigate','https://docs.example.com/manual'),1);
   assert.deepEqual(opened,['https://docs.example.com/manual'],
-    'external HTTPS opens in the system browser');
-  assert.equal(navigate('http://127.0.0.1:43124/'),1,
-    'another loopback port must not acquire Native privileges');
-  assert.equal(navigate('file:///C:/Users/user/private.txt'),1);
-  assert.equal(navigate('javascript:alert(1)'),1);
-  assert.equal(navigate(undefined),1,'unknown destination must fail closed');
+    'a user-originated external HTTPS link opens in the system browser');
+  assert.equal(navigate('will-redirect','https://docs.example.com/redirect'),1);
   assert.deepEqual(opened,['https://docs.example.com/manual'],
-    'unsafe URLs never reach the operating system');
-  assert.equal(navigate('file:///C:/secret','http://127.0.0.1:43123/'),1,
-    'modern destination takes precedence over a stale legacy argument');
-  assert.equal(navigate(undefined,'http://127.0.0.1:43123/settings'),0,
-    'the older Electron tuple remains compatible');
-  assert.equal(navigate(undefined,'https://help.example.com/'),1);
-  assert.deepEqual(opened,['https://docs.example.com/manual','https://help.example.com/']);
+    'server-side redirects are blocked without opening external apps');
+  assert.equal(navigate('will-navigate','file:///C:/private'),1);
+  assert.equal(navigate('will-navigate','javascript:alert(1)'),1);
+  assert.equal(navigate('will-navigate','http://127.0.0.1:43124/'),1);
+  assert.equal(navigate('will-navigate',undefined),1);
+  assert.equal(navigate('will-navigate','file:///C:/secret','http://127.0.0.1:43123/'),1,
+    'current event URL wins over stale legacy destination');
+  assert.equal(navigate('will-navigate',undefined,'http://127.0.0.1:43123/settings'),0,
+    'legacy tuple remains supported');
+  assert.equal(navigate('will-navigate',undefined,'https://help.example.com/'),1);
+  assert.equal(navigate('will-redirect','https://frame.example.com/',undefined,false),0,
+    'iframe redirect is not a main-frame navigation');
   assert.equal(popupHandler({url:'https://help.example.com/new'}).action,'deny');
   assert.equal(popupHandler({url:'file:///C:/secret'}).action,'deny');
   assert.deepEqual(opened,[
     'https://docs.example.com/manual',
     'https://help.example.com/',
     'https://help.example.com/new',
-  ],'popups cannot create privileged windows or open unsafe schemes');
+  ]);
+  nav.setTrustedOrigin(null);
+  assert.equal(navigate('will-navigate','https://docs.example.com/disarmed'),1);
+  assert.equal(popupHandler({url:'https://docs.example.com/disarmed'}).action,'deny');
+  nav.setTrustedOrigin('http://127.0.0.1:43210');
+  assert.equal(navigate('will-redirect','http://127.0.0.1:43123/'),1,
+    'rollback must revoke the previous port before loading fallback');
+  webContents.url='http://127.0.0.1:43210/system/composition/native/index.html';
+  assert.equal(navigate('will-navigate','http://127.0.0.1:43210/home'),0);
+  assert.equal(popupHandler({url:'https://docs.example.com/fallback'}).action,'deny');
+  assert.equal(opened.at(-1),'https://docs.example.com/fallback');
+  assert.match(source,/const nativeNavigation=navigationPolicy\(\);[\s\S]*?await status\('Iniciando a Surface Native compartilhada/);
+  assert.equal(source.split('navigationPolicy();').length,2,
+    'only one policy may be installed per BrowserWindow');
+  assert.match(source,/bindNativeOrigin\(null\);\s*rejectCandidate/);
+  assert.equal(source.split('bindNativeOrigin(runtime.url);').length,3,
+    'both candidate and fallback bind the exact same Native origin');
+});
+
+
+test('Native external link failures are logged without unhandled Electron promises',async()=>{
+  const source=readFileSync(join(__dirname,'main.cjs'),'utf8');
+  const begin=source.indexOf('function navigationPolicy() {');
+  const end=source.indexOf('\nfunction menu(userData) {',begin);
+  assert.ok(begin>0 && end>begin);
+  const logs=[],handlers=new Map();
+  let popupHandler;
+  const webContents={
+    getURL:()=> 'http://127.0.0.1:43123/system/composition/native/index.html',
+    isDestroyed:()=>false,
+    on:(name,listener)=>handlers.set(name,listener),
+    setWindowOpenHandler:handler=>{popupHandler=handler;},
+  };
+  let calls=0;
+  const create=runInNewContext('('+source.slice(begin,end).trim()+')',{
+    URL,window:{webContents},log:msg=>logs.push(msg),
+    shell:{openExternal:()=>{
+      calls++;
+      return Promise.reject(Error('No HTTPS browser association'));
+    }},
+  });
+  create().setTrustedOrigin('http://127.0.0.1:43123');
+  assert.equal(popupHandler({url:'https://docs.example.com/'}).action,'deny');
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(calls,1);
+  assert.ok(logs.some(line=>line.includes('System browser launch failed: No HTTPS browser association')),
+    'a rejected shell Promise must have a handled diagnostic');
+  let blocked=0;
+  handlers.get('will-redirect')({
+    url:'https://other.example.com/',isMainFrame:true,preventDefault(){blocked++;},
+  });
+  assert.equal(blocked,1);
+  assert.equal(calls,1,'HTTP redirect never opens external browser');
 });
 
 test('Native Surface startup failure releases resources without losing unconfirmed owned process',()=>{
@@ -101,7 +163,8 @@ test('Native Surface startup failure releases resources without losing unconfirm
   assert.equal(release({...ports(),currentHost:null}),null);
   assert.deepEqual(calls,['disarm','dispose'],'no child must not trigger process stop');
   // The actual startup catch must route failures through this ownership policy.
-  assert.match(source,/catch\(error\)\{\s*\/\/ A started host is not a healthy Surface;[\s\S]*?runtime=releaseFailedNativeStartup\(\{/);
+  assert.match(source,/catch\(error\)\{\s*\/\/ Revoke navigation and privileged Internet commands[\s\S]*?bindNativeOrigin\(null\);\s*\/\/ A started host is not a healthy Surface;[\s\S]*?runtime=releaseFailedNativeStartup\(\{/,
+    'revoke all Native/Internet grants before releasing the failed host');
   assert.match(source,/browserHost=null;\s*disarmNativeHostExit=null;\s*log\('Startup failed:/);
 });
 
