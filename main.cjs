@@ -474,6 +474,20 @@ async function stageInBackground(userData,template) {
 // relaunch Electron ONCE so every Native token, HTTP route, Surface binding and
 // app bridge is reconstructed through the canonical boot path. A repeat crash
 // shows a truthful error instead of a restart storm or a false MCP-ready state.
+// A failed Surface mount must not leave a started Native listener or its
+// Product child running behind the error splash. Preserve responsibility for
+// a process tree that the OS policy could not confirm stopped; before-quit
+// must get another attempt rather than losing the exact child PID.
+function releaseFailedNativeStartup({currentHost,browser,disarm,stop,log}) {
+  try {disarm?.();} catch(error){log('Native exit watcher cleanup failed: '+error.message);}
+  try {browser?.dispose();} catch(error){log('Internet host cleanup failed: '+error.message);}
+  if(!currentHost?.child)return null;
+  try {
+    if(stop(currentHost.child,currentHost.template))return null;
+  }catch(error){log('Native startup cleanup failed: '+error.message);}
+  log('Native shutdown not confirmed after startup failure; keeping exact PID for exit cleanup');
+  return currentHost;
+}
 function monitorNativeHost(child) {
   disarmNativeHostExit?.();
   disarmNativeHostExit=watchHostAfterReady(child,{
@@ -717,6 +731,14 @@ app.whenReady().then(async()=>{
     }
 
   }catch(error){
+    // A started host is not a healthy Surface; clear its permissions and
+    // stop its Native process before displaying the failure splash.
+    runtime=releaseFailedNativeStartup({
+      currentHost:runtime,browser:browserHost,disarm:disarmNativeHostExit,
+      stop:stopHost,log,
+    });
+    browserHost=null;
+    disarmNativeHostExit=null;
     log('Startup failed: '+error.message);
     status('Falha ao iniciar: '+error.message+'. Verifique os logs no menu OrdaX.');
   }
