@@ -51,6 +51,9 @@ function createDesktopBrowserHost({window, ipcMain, WebContentsView, session, di
       typeof WebContentsView !== 'function') throw new TypeError('Electron Desktop browser owner is required');
   const tabs = new Map();
   const downloads = new Map();
+  // Chromium media events also cover silent video that is not reported by
+  // isCurrentlyAudible(). Track each WebContents rather than the OS idle clock.
+  const activeMedia = new WeakMap();
   // Async page operations are scoped to the exact WebContents and navigation
   // generation, never merely the tab ID (which may be reused after close).
   const pageEpochs = new WeakMap();
@@ -97,7 +100,8 @@ function createDesktopBrowserHost({window, ipcMain, WebContentsView, session, di
       try {
         const wc=view.webContents;
         if (wc.isDestroyed() || typeof wc.isCurrentlyAudible!=='function' ||
-            wc.isCurrentlyAudible() || wc.isLoadingMainFrame?.()) return true;
+            wc.isCurrentlyAudible() || (activeMedia.get(wc)??0)>0 ||
+            wc.isLoadingMainFrame?.()) return true;
       } catch {
         // Failure to inspect Chromium state must delay, not force, relaunch.
         return true;
@@ -174,6 +178,16 @@ function createDesktopBrowserHost({window, ipcMain, WebContentsView, session, di
     }});
     const wc=view.webContents;
     pageEpochs.set(wc,0);
+    wc.on('media-started-playing',()=>activeMedia.set(wc,(activeMedia.get(wc)??0)+1));
+    wc.on('media-paused',()=>activeMedia.set(wc,Math.max(0,(activeMedia.get(wc)??0)-1)));
+    // A different document cannot inherit the previous page's media state.
+    wc.on('did-start-navigation',details=>{
+      // Hash/SPA navigation does not stop playback, and subframe navigation
+      // must not erase activity from another frame in the same WebContents.
+      // Unknown navigation metadata retains the safety gate.
+      if(details?.isMainFrame===true && details.isSameDocument===false)
+        activeMedia.delete(wc);
+    });
     // A navigation/reload revokes prior selection and find results. Chromium
     // may resolve executeJavaScript only after the next document is active.
     for(const event of ['did-start-navigation','did-navigate','did-navigate-in-page'])
@@ -201,6 +215,7 @@ function createDesktopBrowserHost({window, ipcMain, WebContentsView, session, di
         cancelDownload(downloadId,record);
     }
     invalidatePage(id,view.webContents);
+    activeMedia.delete(view.webContents);
     window.contentView.removeChildView(view);
     tabs.delete(id);
     if(activeTabId===id)activeTabId=[...tabs.keys()].at(-1)??null;

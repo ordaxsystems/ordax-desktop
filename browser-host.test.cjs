@@ -462,3 +462,29 @@ test('Chromium cancellation failure must retain the update gate until a terminal
   assert.equal(f.host.hasActiveWork(),false,'actual terminal signal releases gate');
   assert.equal(f.ui.sent.filter(x=>x.value.id===pending.id&&x.value.status==='cancelled').length,1);
 });
+
+test('muted media playback protects the Desktop updater until every player stops',async t=>{
+  const f=fixture();t.after(()=>f.host.dispose());
+  f.post({type:'tab.open',tabId:'tab-muted',url:'https://example.com/'});
+  await Promise.resolve();
+  const wc=View.all[0].webContents;
+  assert.equal(wc.isCurrentlyAudible(),false);
+  assert.equal(f.host.hasActiveWork(),false);
+  wc.emit('media-started-playing');
+  assert.equal(f.host.hasActiveWork(),true,'muted video must block automatic relaunch');
+  wc.emit('media-started-playing');
+  wc.emit('media-paused');
+  assert.equal(f.host.hasActiveWork(),true,'another active player still protects the tab');
+  wc.emit('media-paused');
+  assert.equal(f.host.hasActiveWork(),false,'all paused players release the update gate');
+  wc.emit('media-started-playing');
+  wc.emit('did-start-navigation',{isMainFrame:true,isSameDocument:true});
+  assert.equal(f.host.hasActiveWork(),true,'SPA route changes must preserve playback protection');
+  wc.emit('did-start-navigation',{isMainFrame:false,isSameDocument:false});
+  assert.equal(f.host.hasActiveWork(),true,'another frame cannot erase active media state');
+  wc.emit('did-start-navigation',{isMainFrame:true,isSameDocument:false});
+  assert.equal(f.host.hasActiveWork(),false,'new main document resets the previous media state');
+  wc.emit('media-started-playing');
+  f.post({type:'tab.close',tabId:'tab-muted'});
+  assert.equal(f.host.hasActiveWork(),false,'closed tab does not block the next update');
+});
