@@ -113,6 +113,8 @@ jobs:
           path: .deps/ordax-os
           sparse-checkout: |
             docs/contracts
+            docs/evidence
+            system/contracts
           persist-credentials: false
       - name: Node.js 24
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
