@@ -275,7 +275,10 @@ async function startAndConfirm(loc,logSize){
   let healthy=false;
   try{
     const logfile=path.join(loc.profile,'desktop.log');
-    for(let i=0;i<27;i++){
+    // Windows cold startup can spend over 40s verifying the existing Native
+    // Git candidate before it emits the first log line. Permit up to 90s,
+    // but never accept a startup without the exact post-swap health receipt.
+    for(let i=0;i<60;i++){
       await delay(1500);
       if(spawnError)throw spawnError;
       if(!childAlive(child))return false;
