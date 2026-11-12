@@ -117,13 +117,13 @@ function removeOwnedCandidate(candidate) {
     return {removed:false,code:error.code,phase};
   }
 }
-// Retired verified SHA directories are no longer release authority once the
-// state journal no longer references them. Keep active + rollback + any
-// transaction/rejection references. Do not traverse Windows junctions.
+// Only the active or in-flight Native revision is retained after a healthy
+// Dev boot. Rejected/incompatible SHAs are journal markers, not installed
+// runtimes. Never traverse the Windows dependency junction.
 function sweepRetiredVersions(userData, {log=()=>{}}={}) {
   const state=readState(userData);
   const kept=new Set([state.activeSha,state.previousSha,state.pendingSha,
-    state.attemptedSha,state.pinnedSha,state.rejectedSha,state.incompatibleSha].filter(Boolean));
+    state.attemptedSha,state.pinnedSha].filter(Boolean));
   const dir=join(userData,VERSIONS_DIR);
   const result={removed:0,deferred:0};
   if(!existsSync(dir)) return result;
@@ -135,7 +135,7 @@ function sweepRetiredVersions(userData, {log=()=>{}}={}) {
     // Re-read before destruction: refuse cleanup if activation state moved.
     const live=readState(userData);
     if([live.activeSha,live.previousSha,live.pendingSha,live.attemptedSha,
-        live.pinnedSha,live.rejectedSha,live.incompatibleSha].includes(entry.name)) continue;
+        live.pinnedSha].includes(entry.name)) continue;
     try {
       prepareWindowsGitDeletion(join(candidate,'.git'));
       const dependencyMount=join(candidate,'node_modules');
@@ -261,24 +261,27 @@ function confirmHealthy(userData, sha) {
   if (!sha || state.pendingSha !== sha || state.attemptedSha !== sha) {
     throw Error('Desktop candidate health does not match the attempted commit');
   }
-  return writeState(userData,{...state,activeSha:sha,previousSha:state.activeSha,
+  // The previous verified revision protects an unconfirmed candidate through
+  // boot health. Once confirmed, it is no longer a second installed version.
+  return writeState(userData,{...state,activeSha:sha,previousSha:null,
     pendingSha:null,attemptedSha:null,rejectedSha:null,nonRuntimeMainSha:null});
+}
+// One-time reconciliation for journals from the earlier two-version Dev
+// policy. Call only after the exact active Native boot passed its health gates.
+// Never clear an in-flight trial, a user pin or a mismatched active source.
+function retireHealthyPrevious(userData, sha) {
+  const state=readState(userData);
+  if (!SHA_RE.test(String(sha ?? '')) || state.activeSha !== sha ||
+      state.pendingSha || state.attemptedSha || state.pinnedSha || !state.previousSha)
+    return false;
+  writeState(userData,{...state,previousSha:null});
+  return true;
 }
 function rejectCandidate(userData, sha) {
   const state = readState(userData);
   if (!sha || state.pendingSha !== sha) return false;
   writeState(userData,{...state,pendingSha:null,attemptedSha:null,rejectedSha:sha});
   return true;
-}
-async function pinPrevious(userData,template) {
-  const state = readState(userData);
-  if (!state.previousSha) throw Error('No previous verified Desktop Dev source for rollback');
-  if (!await verifiedVersion(userData,state.previousSha,template)) {
-    throw Error('Previous Desktop Dev source failed verification; rollback refused');
-  }
-  return writeState(userData,{...state,activeSha:state.previousSha,
-    previousSha:state.activeSha, pendingSha:null,attemptedSha:null,
-    pinnedSha:state.previousSha,nonRuntimeMainSha:null});
 }
 function unpin(userData) {
   const state = readState(userData);
@@ -566,6 +569,6 @@ async function stageMain({ userData, template, log = () => {}, remote = OFFICIAL
 module.exports = {
   CHANNEL_SCHEMA, readState, writeState, validateState, versionRoot,
   chooseBootVersion, confirmedVersion: verifiedVersion,
-  stageMain, shouldAutoActivate, desktopFirstRunComplete, createDesktopIdleActivation, createDesktopWindowIdleTracker, confirmHealthy, rejectCandidate, pinPrevious, unpin,
+  stageMain, shouldAutoActivate, desktopFirstRunComplete, createDesktopIdleActivation, createDesktopWindowIdleTracker, confirmHealthy, retireHealthyPrevious, rejectCandidate, unpin,
   prepareWindowsGitDeletion, removeOwnedCandidate, sweepStaleCandidates, sweepRetiredVersions,
 };

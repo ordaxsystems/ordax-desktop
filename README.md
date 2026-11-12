@@ -15,6 +15,12 @@ histórica; não autoriza uma segunda implementação.
 - Build, origem e segurança: [BUILD-AND-PROVENANCE.md](BUILD-AND-PROVENANCE.md).
 - Testes portáveis: `npm test` (sem compilar kernel, Buildroot ou instalador).
 
+O canal Desktop **Dev mantém uma única revisão Native instalada depois da
+confirmação de saúde**. Durante o teste de uma atualização, conserva apenas o
+Native ativo e o candidato até a decisão; uma falha restaura o ativo sem tocar
+na versão atual. Depois de um boot saudável, a limpeza canônica retira revisões
+superadas, sem tocar no toolchain compartilhado, credenciais ou dados do usuário.
+
 A CI privada `Desktop Source Contracts` valida a fonte e chama um **único**
 produtor Windows do `ordax-os`, pinado por commit exato
 `3bafa3d1e25f644cf089cce1444e1f85c53c2c4b`. O OS continua autoridade dos recursos Native e do lock da Surface;

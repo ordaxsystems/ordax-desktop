@@ -22,8 +22,8 @@ const { OFFICIAL_REMOTE } = require('./runtime.cjs');
 const { compiledBundleSha256 } = require('./native-build.cjs');
 const { git } = require('./checkout.cjs');
 const { readState, writeState, validateState, versionRoot, stageMain,
-  chooseBootVersion, confirmHealthy, pinPrevious, unpin, shouldAutoActivate, desktopFirstRunComplete, createDesktopIdleActivation, createDesktopWindowIdleTracker,
-  sweepStaleCandidates, removeOwnedCandidate, prepareWindowsGitDeletion } = require('./dev-update.cjs');
+  chooseBootVersion, confirmHealthy, retireHealthyPrevious, unpin, shouldAutoActivate, desktopFirstRunComplete, createDesktopIdleActivation, createDesktopWindowIdleTracker,
+  sweepStaleCandidates, sweepRetiredVersions, removeOwnedCandidate, prepareWindowsGitDeletion } = require('./dev-update.cjs');
 
 test('Desktop DEV Git sparse checkout includes the existing MCP candidate proof',()=>{
   const source=readFileSync(join(__dirname,'dev-update.cjs'),'utf8');
@@ -65,6 +65,8 @@ test('Electron connects ordax-pull staging to automatic, health-gated idle activ
   assert.match(source,/runtime\.child\.signalCode===null/);
   assert.match(source,/if\(selected\.trial\) \{\s*confirmHealthy\(userData,selected\.sha\)/);
   assert.match(source,/rejectCandidate\(userData,selected\.sha\)/);
+  assert.match(source,/retireHealthyPrevious\(userData,selected\.sha\)/);
+  assert.doesNotMatch(source,/Reverter para versão anterior Dev/);
 });
 
 test('minimized OrdaX updates after 60s of its OWN inattention despite Windows idle being zero',()=>{
@@ -610,7 +612,7 @@ test('unconfirmed candidate is rejected on next start, without deleting previous
   assert.equal((await stageMain({userData:f.userData,template:f.template,runGit:f.offlineGit,buildCandidate:f.offlineBuild})).status,'rejected');
 });
 
-test('second fast-forward stages separately; explicit rollback pins previous commit',async t=>{
+test('confirmed Dev updates retain one Native revision; in-flight trials keep known-good',async t=>{
   const f=fixture(t);
   await stageMain({userData:f.userData,template:f.template,runGit:f.offlineGit,buildCandidate:f.offlineBuild});
   await chooseBootVersion({userData:f.userData,template:f.template});
@@ -621,15 +623,54 @@ test('second fast-forward stages separately; explicit rollback pins previous com
   assert.equal(staged.sha,second);
   assert.ok(existsSync(versionRoot(f.userData,f.first)));
   assert.ok(existsSync(versionRoot(f.userData,second)));
+  assert.equal(retireHealthyPrevious(f.userData,f.first),false,'pending candidate must prevent retirement');
   await chooseBootVersion({userData:f.userData,template:f.template});
+  assert.equal(readState(f.userData).activeSha,f.first);
+  assert.deepEqual(sweepRetiredVersions(f.userData),{removed:0,deferred:0},
+    'the known-good and in-flight candidate must remain until successful boot');
   confirmHealthy(f.userData,second);
-  const rolled=await pinPrevious(f.userData,f.template);
-  assert.equal(rolled.activeSha,f.first);
-  assert.equal(rolled.previousSha,second);
-  assert.equal(rolled.pinnedSha,f.first);
-  assert.equal((await stageMain({userData:f.userData,template:f.template,runGit:f.offlineGit,buildCandidate:f.offlineBuild})).status,'pinned');
-  assert.equal((await chooseBootVersion({userData:f.userData,template:f.template})).sha,f.first);
-  assert.equal(unpin(f.userData).pinnedSha,null);
+  assert.equal(readState(f.userData).previousSha,null);
+  assert.equal(readState(f.userData).activeSha,second);
+  assert.deepEqual(sweepRetiredVersions(f.userData),{removed:1,deferred:0});
+  assert.equal(existsSync(versionRoot(f.userData,f.first)),false);
+  assert.ok(existsSync(versionRoot(f.userData,second)));
+  assert.equal((await chooseBootVersion({userData:f.userData,template:f.template})).sha,second);
+});
+
+test('healthy legacy Dev journal retires old revision without touching active or pending sources',t=>{
+  const f=fixture(t);
+  const old='a'.repeat(40),active='b'.repeat(40),pending='c'.repeat(40);
+  for(const sha of [old,active,pending]){
+    const dir=versionRoot(f.userData,sha);
+    mkdirSync(dir,{recursive:true});
+    writeFileSync(join(dir,'revision'),'exact owned Native revision');
+  }
+  writeState(f.userData,{...readState(f.userData),activeSha:active,previousSha:old,pendingSha:pending});
+  assert.equal(retireHealthyPrevious(f.userData,active),false,'never retire known-good during a pending trial');
+  assert.deepEqual(sweepRetiredVersions(f.userData),{removed:0,deferred:0});
+  writeState(f.userData,{...readState(f.userData),pendingSha:null});
+  assert.equal(retireHealthyPrevious(f.userData,old),false,'different SHA cannot retire a known-good copy');
+  assert.equal(retireHealthyPrevious(f.userData,active),true);
+  assert.equal(retireHealthyPrevious(f.userData,active),false,'retirement is idempotent');
+  assert.equal(readState(f.userData).previousSha,null);
+  assert.deepEqual(sweepRetiredVersions(f.userData),{removed:2,deferred:0});
+  assert.equal(existsSync(versionRoot(f.userData,active)),true,'never remove the active revision');
+  assert.equal(existsSync(versionRoot(f.userData,old)),false);
+  assert.equal(existsSync(versionRoot(f.userData,pending)),false);
+});
+
+test('rejected Native SHA is only a no-retry marker, not a retained second installation',t=>{
+  const f=fixture(t);
+  const rejected='d'.repeat(40),active='e'.repeat(40);
+  for(const sha of [rejected,active]){
+    mkdirSync(versionRoot(f.userData,sha),{recursive:true});
+    writeFileSync(join(versionRoot(f.userData,sha),'keep'),'Native fixture');
+  }
+  writeState(f.userData,{...readState(f.userData),activeSha:active,rejectedSha:rejected});
+  assert.deepEqual(sweepRetiredVersions(f.userData),{removed:1,deferred:0});
+  assert.equal(readState(f.userData).rejectedSha,rejected,'do not retry a rejected source');
+  assert.equal(existsSync(versionRoot(f.userData,rejected)),false);
+  assert.equal(existsSync(versionRoot(f.userData,active)),true);
 });
 
 test('Git staging never overrides a rejection recorded during asynchronous candidate build',async t=>{

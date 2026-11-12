@@ -1,6 +1,6 @@
 'use strict';
-// Offline contract/E2E: two real Git OS commits, two genuine pinned Surface
-// commits, the actual Vite compiler and immutable Dev activation/rollback.
+// Offline contract/E2E: real Git OS and pinned Surface commits, real Vite
+// compiler, single-version promotion and failed-candidate recovery.
 // No fixture is allowed to contact GitHub or alter the installed user profile.
 const test=require('node:test');
 const assert=require('node:assert/strict');
@@ -12,7 +12,7 @@ const {OFFICIAL_REMOTE}=require('./runtime.cjs');
 const {git}=require('./checkout.cjs');
 const {withVerifiedSurface}=require('./surface-stage.cjs');
 const {buildNativeCandidate,hasNativeBundle,compiledBundleSha256}=require('./native-build.cjs');
-const {stageMain,readState,chooseBootVersion,confirmHealthy,pinPrevious,versionRoot}=require('./dev-update.cjs');
+const {stageMain,readState,chooseBootVersion,confirmHealthy,sweepRetiredVersions,versionRoot}=require('./dev-update.cjs');
 
 function gitCommand(cwd,...args) {
   const result=spawnSync('git',args,{cwd,encoding:'utf8',windowsHide:true,
@@ -65,7 +65,7 @@ function osFiles(root,lock,revision) {
   put(root,'tools/surface-web/README.md','isolated minimal build fixture');
   put(root,'.gitignore','node_modules/\nout/\n');
 }
-test('Windows Dev compiles real Git revisions, restores known-good after interrupted trial and preserves rollback',async t=>{
+test('Windows Dev compiles real Git revisions, restores known-good after interrupted trial with only one healthy installed revision',async t=>{
   const root=mkdtempSync(join(tmpdir(),'ordax-dev-real-build-'));
   t.after(()=>rmSync(root,{recursive:true,force:true,maxRetries:5,retryDelay:150}));
   const original=join(root,'original-os'), visual=join(root,'original-surface');
@@ -141,7 +141,9 @@ test('Windows Dev compiles real Git revisions, restores known-good after interru
   assert.equal(boot.sha,osTwo);assert.equal(boot.trial,true);
   assert.equal(readState(userData).activeSha,osOne,'trial is not promoted early');
   confirmHealthy(userData,osTwo);
-  assert.equal(readState(userData).previousSha,osOne);
+  assert.equal(readState(userData).previousSha,null);
+  assert.deepEqual(sweepRetiredVersions(userData),{removed:1,deferred:0});
+  assert.equal(existsSync(one),false,'healthy promotion must retire the old compiled Native source');
   assert.equal((await chooseBootVersion({userData,template})).sha,osTwo);
   // Reproduce a process dying AFTER a genuine compiled Git revision has been
   // selected for one boot but BEFORE the Native health receipt exists.
@@ -157,7 +159,7 @@ test('Windows Dev compiles real Git revisions, restores known-good after interru
   assert.equal(hasNativeBundle(interrupted),true);
   assert.notEqual(compiledBundleSha256(interrupted),compiledBundleSha256(two));
   assert.equal(readState(userData).activeSha,osTwo);
-  assert.equal(readState(userData).previousSha,osOne);
+  assert.equal(readState(userData).previousSha,null);
   boot=await chooseBootVersion({userData,template});
   assert.equal(boot.trial,true);
   assert.equal(boot.sha,osInterrupted);
@@ -172,7 +174,7 @@ test('Windows Dev compiles real Git revisions, restores known-good after interru
   assert.equal(recovered.trial,false);
   const afterCrash=readState(userData);
   assert.equal(afterCrash.activeSha,osTwo);
-  assert.equal(afterCrash.previousSha,osOne);
+  assert.equal(afterCrash.previousSha,null);
   assert.equal(afterCrash.pendingSha,null);
   assert.equal(afterCrash.attemptedSha,null);
   assert.equal(afterCrash.rejectedSha,osInterrupted);
@@ -181,19 +183,11 @@ test('Windows Dev compiles real Git revisions, restores known-good after interru
     'never loop on an exact failed official source revision');
   assert.equal(buildCount,3,'same rejected SHA must not compile again');
   assert.equal(hasNativeBundle(two),true);
-  assert.equal(hasNativeBundle(one),true);
+  assert.equal(existsSync(one),false,'the superseded revision stays retired');
   assert.equal((await chooseBootVersion({userData,template})).sha,osTwo,
     'recovered known-good remains selected across subsequent restarts');
-  await pinPrevious(userData,template);
-  assert.equal(readState(userData).activeSha,osOne);
-  assert.equal(readState(userData).pinnedSha,osOne);
-  assert.equal((await chooseBootVersion({userData,template})).sha,osOne);
-  assert.equal((await update()).status,'pinned');
-  assert.ok(hasNativeBundle(two),'rollback preserves later revision without changing it');
   // An authoritative but incompatible later revision may never replace the
   // last healthy runtime or repeatedly clone the same immutable source SHA.
-  const {unpin}=require('./dev-update.cjs');
-  unpin(userData);
   osFiles(original,surfaceTwo,'broken');
   const bad=JSON.parse(readFileSync(join(original,'docs/contracts/surface-source.json'),'utf8'));
   bad.status='legacy';
@@ -202,11 +196,11 @@ test('Windows Dev compiles real Git revisions, restores known-good after interru
   const incompatible=await update();
   assert.equal(incompatible.status,'incompatible');
   assert.equal(incompatible.sha,osBroken);
-  assert.equal(readState(userData).activeSha,osOne,'broken revision cannot replace known-good');
+  assert.equal(readState(userData).activeSha,osTwo,'broken revision cannot replace known-good');
   assert.equal(readState(userData).pendingSha,null);
   assert.equal(readState(userData).incompatibleSha,osBroken);
   assert.equal((await update()).status,'incompatible');
   assert.equal(buildCount,4,'incompatible SHA must not trigger another clone or build');
-  assert.equal((await chooseBootVersion({userData,template})).sha,osOne);
+  assert.equal((await chooseBootVersion({userData,template})).sha,osTwo);
 
 });

@@ -1,12 +1,12 @@
 'use strict';
 // Windows Electron host owned by ordax-desktop. Native OS and Surface retain their own repositories.
-const { app, BrowserWindow, WebContentsView, ipcMain, session, Menu, shell, dialog, powerMonitor, screen } = require('electron');
+const { app, BrowserWindow, WebContentsView, ipcMain, session, Menu, shell, powerMonitor, screen } = require('electron');
 const { createDesktopBrowserHost } = require('./browser-host.cjs');
 const { join, resolve, isAbsolute, basename } = require('node:path');
 const { randomBytes } = require('node:crypto');
 const { mkdirSync, createWriteStream, existsSync, readFileSync } = require('node:fs');
 const { resolveTemplate, runtimeStateDirectory } = require('./runtime.cjs');
-const { chooseBootVersion, confirmHealthy, rejectCandidate, stageMain, desktopFirstRunComplete, createDesktopIdleActivation, createDesktopWindowIdleTracker, readState, pinPrevious, unpin } = require('./dev-update.cjs');
+const { chooseBootVersion, confirmHealthy, rejectCandidate, stageMain, desktopFirstRunComplete, createDesktopIdleActivation, createDesktopWindowIdleTracker, readState, retireHealthyPrevious, unpin } = require('./dev-update.cjs');
 const { startHost, stopHost, watchHostAfterReady, canAutoRelaunchHost } = require('./host.cjs');
 const { readDesktopWindowLayout,desktopMinimumWindowSize,
   reconcileDesktopWindowDisplayChange,readDesktopWindowPreference,
@@ -124,18 +124,6 @@ function menu(userData) {
       ...(app.isPackaged ? [
         {type:'separator'},
         {label:'Verificar atualizações Dev',click:()=>void stageInBackground(userData,resolveTemplate(__dirname,process.resourcesPath,true))},
-        {label:'Reverter para versão anterior Dev',click:async()=>{
-          try {
-            const state=readState(userData);
-            if(!state.previousSha){ dialog.showMessageBoxSync(window,{type:'info',message:'Nenhuma versão Dev anterior verificada está disponível.'});return; }
-            const reply=await dialog.showMessageBox(window,{type:'warning',buttons:['Cancelar','Reverter e reiniciar'],
-              defaultId:0,cancelId:0,message:'Reverter o OrdaX Desktop Dev?',
-              detail:'A versão anterior será fixada. Atualizações automáticas permanecerão suspensas até reativadas.'});
-            if(reply.response!==1)return;
-            await pinPrevious(userData,resolveTemplate(__dirname,process.resourcesPath,true));
-            app.relaunch();app.quit();
-          }catch(error){log('Rollback rejected: '+error.message);}
-        }},
         {label:'Retomar atualizações Dev',click:()=>{
           try {unpin(userData);void stageInBackground(userData,resolveTemplate(__dirname,process.resourcesPath,true));}
           catch(error){log('Update unpin failed: '+error.message);}
@@ -753,6 +741,15 @@ app.whenReady().then(async()=>{
       log('Native Surface ready after rollback: '+runtime.url);
     }
     monitorNativeHost(runtime.child);
+    // Migrate the earlier two-version Dev journal only after an exact,
+    // already-verified active Native boot is healthy. An in-flight candidate
+    // keeps its known-good active source until confirmation.
+    if(app.isPackaged && !selected.trial && selected.sha) {
+      try {
+        if(retireHealthyPrevious(userData,selected.sha))
+          log('Retired verified previous Native Dev revision after healthy boot');
+      }catch(error){log('Native Dev retirement deferred: '+error.message);}
+    }
     if(app.isPackaged) {
       idleActivation=createDesktopIdleActivation({
         userData,template,log,
