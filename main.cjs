@@ -25,6 +25,16 @@ app.setName('OrdaX OS Desktop Dev');
 // desktop-dev-update-state.json. This is a profile selector only, never a
 // different OrdaX runtime, Surface, updater or product channel.
 const devProfile = process.env.ORDAX_DESKTOP_TEST_PROFILE === '1';
+// Installing the Windows-only unsigned Desktop Dev package opts in to its
+// OS-verified development Runtime candidate across ordinary Windows starts.
+// Do not create another preference or agent; explicit environment overrides
+// still win. Stable and the isolated smoke profile never gain this grant.
+// The Native Supervisor independently checks enrollment, exact binary hash,
+// dev-only evidence and release state; remote MCP grants remain Platform-owned.
+if(process.platform==='win32' && app.isPackaged && !devProfile &&
+    require('./package.json').name==='ordax-os-desktop-dev' &&
+    process.env.ORDAX_DESKTOP_MCP_DEV === undefined)
+  process.env.ORDAX_DESKTOP_MCP_DEV='1';
 const localDevelopment = !app.isPackaged && process.env.ORDAX_DESKTOP_LOCAL_DEV === '1';
 const explicitTestDirectory = process.env.ORDAX_DESKTOP_TEST_PROFILE_DIR || '';
 // Smoke tests on an already-used Windows machine need a unique directory,

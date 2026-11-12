@@ -71,6 +71,12 @@ test('Electron connects ordax-pull staging to automatic, health-gated idle activ
   assert.match(source,/if\(selected\.trial\) \{\s*confirmHealthy\(userData,selected\.sha\)/);
   assert.match(source,/rejectCandidate\(userData,selected\.sha\)/);
   assert.match(source,/retireHealthyPrevious\(userData,selected\.sha\)/);
+  // A normally restarted packaged Dev Desktop must not depend on a one-off
+  // environment variable from the shell delta installer to start its Runtime.
+  assert.match(source,/process\.platform==='win32' && app\.isPackaged && !devProfile &&/);
+  assert.match(source,/require\('\.\/package\.json'\)\.name==='ordax-os-desktop-dev'/);
+  assert.match(source,/process\.env\.ORDAX_DESKTOP_MCP_DEV === undefined\)\s*process\.env\.ORDAX_DESKTOP_MCP_DEV='1'/);
+  assert.match(source,/const devProfile = process\.env\.ORDAX_DESKTOP_TEST_PROFILE === '1'/);
   assert.doesNotMatch(source,/Reverter para versão anterior Dev/);
   assert.match(source,/const \{[^\n]*\bdialog\b[^\n]*\} = require\('electron'\)/);
   assert.match(source,/createDesktopBrowserHost\(\{window,ipcMain,WebContentsView,session,dialog,log\}\)/);
