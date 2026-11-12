@@ -9,12 +9,15 @@ const { tmpdir } = require('node:os');
 // by CI; the repository itself must never ship a second authority contract.
 // Set this test-only development locator before runtime.cjs loads its policy.
 const osCheckout=join(__dirname,'.deps','ordax-os');
-const canonicalOs=existsSync(join(osCheckout,'docs','contracts','distribution-profiles.json'))
-  ? osCheckout : join(__dirname,'../..');
-if(canonicalOs===osCheckout){
-  process.env.ORDAX_DESKTOP_LOCAL_DEV='1';
-  process.env.ORDAX_DESKTOP_OS_CHECKOUT=osCheckout;
-}
+const siblingOs=join(__dirname,'..','ordax-os');
+const canonicalOs=process.env.ORDAX_DESKTOP_OS_CHECKOUT || (
+  existsSync(join(osCheckout,'docs','contracts','distribution-profiles.json'))
+    ? osCheckout : siblingOs
+);
+if(!existsSync(join(canonicalOs,'docs','contracts','distribution-profiles.json')))
+  throw Error('Desktop tests require the canonical ordax-os checkout, either as .deps/ordax-os or a sibling, or via ORDAX_DESKTOP_OS_CHECKOUT');
+process.env.ORDAX_DESKTOP_LOCAL_DEV='1';
+process.env.ORDAX_DESKTOP_OS_CHECKOUT=canonicalOs;
 const { OFFICIAL_REMOTE } = require('./runtime.cjs');
 const { compiledBundleSha256 } = require('./native-build.cjs');
 const { git } = require('./checkout.cjs');
