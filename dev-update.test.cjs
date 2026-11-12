@@ -10,12 +10,17 @@ const { tmpdir } = require('node:os');
 // Set this test-only development locator before runtime.cjs loads its policy.
 const osCheckout=join(__dirname,'.deps','ordax-os');
 const siblingOs=join(__dirname,'..','ordax-os');
+// The pinned OS reusable installer mounts the detached Desktop checkout at
+// <canonical ordax-os>/out/ordax-desktop-source. Reuse that OS tree rather than
+// materializing another authority or depending on a sibling repo's name.
+const detachedInstallerOs=join(__dirname,'..','..');
+const hasCanonicalContract=root=>typeof root==='string' &&
+  existsSync(join(root,'docs','contracts','distribution-profiles.json'));
 const canonicalOs=process.env.ORDAX_DESKTOP_OS_CHECKOUT || (
-  existsSync(join(osCheckout,'docs','contracts','distribution-profiles.json'))
-    ? osCheckout : siblingOs
+  [osCheckout,siblingOs,detachedInstallerOs].find(hasCanonicalContract)
 );
-if(!existsSync(join(canonicalOs,'docs','contracts','distribution-profiles.json')))
-  throw Error('Desktop tests require the canonical ordax-os checkout, either as .deps/ordax-os or a sibling, or via ORDAX_DESKTOP_OS_CHECKOUT');
+if(!hasCanonicalContract(canonicalOs))
+  throw Error('Desktop tests require the canonical ordax-os checkout through ORDAX_DESKTOP_OS_CHECKOUT, .deps/ordax-os, a sibling checkout, or the pinned installer parent');
 process.env.ORDAX_DESKTOP_LOCAL_DEV='1';
 process.env.ORDAX_DESKTOP_OS_CHECKOUT=canonicalOs;
 const { OFFICIAL_REMOTE } = require('./runtime.cjs');
