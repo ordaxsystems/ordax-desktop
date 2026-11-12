@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const {createHash}=require('node:crypto');
 const {inspectPeImports,auditEngine} = require('./pe-dependency-audit.cjs');
 function fixture({name='KERNEL32.DLL',delay=null}={}) {
   const b=Buffer.alloc(2048);
@@ -58,10 +59,36 @@ test('inspects exact source-lock inventory and rejects undeclared or linked PE',
   t.after(()=>fs.rmSync(folder,{recursive:true,force:true}));
   const exe=path.join(folder,'llama-server.exe');
   fs.writeFileSync(exe,fixture());
-  assert.deepEqual(auditEngine(folder,['llama-server.exe']),{files:1,dynamic:[]});
+  assert.deepEqual(auditEngine(folder,['llama-server.exe']),{files:1,dynamic:[],appLocalVc:0});
   fs.writeFileSync(path.join(folder,'other.dll'),fixture());
   assert.throws(()=>auditEngine(folder,['llama-server.exe']),/inventory/);
   fs.rmSync(path.join(folder,'other.dll'));
   fs.writeFileSync(exe,fixture({name:'MSVCP140.DLL'}));
   assert.deepEqual(auditEngine(folder,['llama-server.exe']).dynamic,[{name:'llama-server.exe',dependencies:['MSVCP140.DLL']}]);
+});
+
+
+test('three pinned signed-source VC DLLs close exactly the MSVC import graph', t=>{
+  const folder=fs.mkdtempSync(path.join(os.tmpdir(),'ordax-msvc-import-'));
+  t.after(()=>fs.rmSync(folder,{recursive:true,force:true}));
+  fs.writeFileSync(path.join(folder,'llama-server.exe'),fixture({name:'MSVCP140.DLL'}));
+  const pairs=[
+    ['msvcp140.dll','VCRUNTIME140_1.DLL'],
+    ['vcruntime140.dll','KERNEL32.DLL'],
+    ['vcruntime140_1.dll','VCRUNTIME140.DLL'],
+  ];
+  const pins=pairs.map(([name,dependency])=>{
+    const bytes=fixture({name:dependency});
+    fs.writeFileSync(path.join(folder,name),bytes);
+    return {name,size_bytes:bytes.length,sha256:createHash('sha256').update(bytes).digest('hex')};
+  });
+  const names=['llama-server.exe',...pins.map(x=>x.name)];
+  assert.deepEqual(auditEngine(folder,names,pins),{files:4,dynamic:[],appLocalVc:3});
+  fs.writeFileSync(path.join(folder,'vcruntime140_1.dll'),fixture({name:'VCOMP140.DLL'}));
+  assert.throws(()=>auditEngine(folder,names,pins),/prerequisite bytes differ/);
+  pins[2].sha256=createHash('sha256').update(fs.readFileSync(path.join(folder,'vcruntime140_1.dll'))).digest('hex');
+  assert.deepEqual(auditEngine(folder,names,pins).dynamic,[{
+    name:'vcruntime140_1.dll',dependencies:['VCOMP140.DLL']
+  }]);
+  assert.throws(()=>auditEngine(folder,names,pins.slice(0,2)),/manifest incomplete/);
 });

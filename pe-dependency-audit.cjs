@@ -4,6 +4,7 @@
 // This gate prevents a VS-equipped CI runner from masking undeployed MSVC DLLs.
 const fs = require('node:fs');
 const path = require('node:path');
+const {createHash}=require('node:crypto');
 const VC_RUNTIME_RE = /^(?:VCRUNTIME14\d*(?:_\d+)?|MSVCP14\d*(?:_[A-Z0-9_]+)?|CONCRT14\d*|VCOMP14\d*|MSVCR\d+)\.DLL$/i;
 const MAX_IMPORTS = 512;
 function inspectPeImports(bytes) {
@@ -85,7 +86,8 @@ function inspectPeImports(bytes) {
   return [...imports].sort();
 }
 
-function auditEngine(engineDirectory, requiredNames) {
+const VC143_NAMES = Object.freeze(['msvcp140.dll','vcruntime140.dll','vcruntime140_1.dll']);
+function auditEngine(engineDirectory, requiredNames, vcFiles=[]) {
   if (typeof engineDirectory !== 'string' || !engineDirectory)
     throw TypeError('Canonical Aura engine directory required');
   const rootInfo = fs.lstatSync(engineDirectory);
@@ -102,30 +104,56 @@ function auditEngine(engineDirectory, requiredNames) {
   if (actual.length !== expected.length ||
       actual.some((name, i) => name !== expected[i]))
     throw Error('Aura engine file inventory disagrees with source lock');
+  if (!Array.isArray(vcFiles) ||
+      (vcFiles.length !== 0 && (vcFiles.length !== VC143_NAMES.length ||
+       !VC143_NAMES.every(n => vcFiles.some(e => e?.name === n)))))
+    throw Error('Canonical Microsoft VC143 prerequisite manifest incomplete');
+  const approved = new Map();
+  for (const entry of vcFiles) {
+    if (!entry || !VC143_NAMES.includes(entry.name) ||
+        approved.has(entry.name.toUpperCase()) ||
+        !/^[a-f0-9]{64}$/.test(entry.sha256) ||
+        !Number.isSafeInteger(entry.size_bytes) || entry.size_bytes <= 0 ||
+        !requiredNames.includes(entry.name))
+      throw Error('Invalid Microsoft VC143 dependency pin');
+    approved.set(entry.name.toUpperCase(),entry);
+  }
   const dynamic = [];
   for (const name of expected) {
     const file = path.join(engineDirectory, name);
     const stat = fs.lstatSync(file);
     if (!stat.isFile() || stat.isSymbolicLink() || !stat.size)
       throw Error('Unsafe Windows engine file: ' + name);
-    const imports = inspectPeImports(fs.readFileSync(file));
-    const vc = imports.filter(item => VC_RUNTIME_RE.test(item));
+    const contents = fs.readFileSync(file);
+    const pinned = approved.get(name.toUpperCase());
+    if (pinned && (stat.size !== pinned.size_bytes ||
+        createHash('sha256').update(contents).digest('hex') !== pinned.sha256))
+      throw Error('Pinned Microsoft VC143 prerequisite bytes differ: '+name);
+    const imports = inspectPeImports(contents);
+    const vc = imports.filter(item => VC_RUNTIME_RE.test(item) && !approved.has(item));
     if (vc.length) dynamic.push({name, dependencies:vc});
   }
-  return {files:expected.length, dynamic};
+  return {files:expected.length, dynamic, appLocalVc:approved.size};
 }
 
 function runCli(argv=process.argv.slice(2)) {
   if (argv.length !== 2) throw Error('Usage: node pe-dependency-audit.cjs <engine-directory> <local-ai-source-lock.json>');
   const lock = JSON.parse(fs.readFileSync(argv[1], 'utf8'));
-  const expected = lock?.engine?.windows_artifact?.files?.map(entry => entry.name);
-  const result = auditEngine(argv[0], expected);
+  const artifact=lock?.engine?.windows_artifact;
+  const vc=artifact?.msvc_runtime;
+  if(vc?.distribution !== 'microsoft-vc143-app-local' ||
+     vc.publisher !== 'Microsoft Corporation' ||
+     !Array.isArray(vc.files) || vc.files.length !== VC143_NAMES.length)
+    throw Error('Canonical app-local Microsoft prerequisite missing');
+  const expected = [...(artifact?.files?.map(entry => entry.name) || []),
+    ...vc.files.map(entry=>entry.name)];
+  const result = auditEngine(argv[0], expected, vc.files);
   if (result.dynamic.length) {
     for (const item of result.dynamic)
       console.error('WINDOWS_AURA_UNDECLARED_MSVC_DEPENDENCY='+item.name+':'+item.dependencies.join(','));
     throw Error('Windows Aura package requires MSVC DLLs not deployed in per-user NSIS; fix canonical Intelligence builder or supply an approved verified prerequisite. A VS runner is not clean Windows.');
   }
-  console.log('WINDOWS_AURA_PE_LOADER_CLOSURE=PASS files='+result.files+' dynamic_msvc=0');
+  console.log('WINDOWS_AURA_PE_LOADER_CLOSURE=PASS files='+result.files+' unresolved_msvc=0 app_local_vc='+result.appLocalVc);
   return result;
 }
 module.exports = {inspectPeImports,auditEngine,runCli};

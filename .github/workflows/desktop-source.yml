@@ -213,9 +213,9 @@ jobs:
     name: Canonical Windows installer (detached Desktop + OS)
     needs: windows-source
     if: needs.windows-source.outputs.installer_required == 'true'
-    uses: ordaxsystems/ordax-os/.github/workflows/windows-desktop-dev.yml@57e90d80cd7323bbfc640eac7ffedffa32fa4276
+    uses: ordaxsystems/ordax-os/.github/workflows/windows-desktop-dev.yml@b97220fe7a44e7e794606f40625f218798deb6cc
     with:
-      os_sha: 57e90d80cd7323bbfc640eac7ffedffa32fa4276
+      os_sha: b97220fe7a44e7e794606f40625f218798deb6cc
       desktop_sha: ${{ github.event.pull_request.head.sha || github.sha }}
       # The pinned OS publisher creates a draft and then queries it by tag;
       # GitHub returns 404 for that draft. Keep the real NSIS + Windows smoke
