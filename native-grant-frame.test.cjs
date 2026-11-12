@@ -1,7 +1,7 @@
 'use strict';
 const test=require('node:test');
 const assert=require('node:assert/strict');
-const {isTrustedNativeRequest}=require('./native-grant-frame.cjs');
+const {isTrustedNativeRequest,isNativeStateRoute}=require('./native-grant-frame.cjs');
 const allowedOrigin='http://127.0.0.1:43210';
 const doc=allowedOrigin+'/system/composition/native/index.html';
 function fixture(overrides={}){
@@ -63,4 +63,28 @@ test('malformed URL or missing details fails closed',()=>{
 test('valid route remains allowed with query string',()=>{
   const f=fixture();f.details.url=allowedOrigin+'/__ordax/native/files?path=%2F';
   assert.equal(isTrustedNativeRequest(f),true);
+});
+test('canonical Native sync persistence uses only the trusted Electron state grant',()=>{
+  for(const path of [
+    '/__ordax/native/first-run',
+    '/__ordax/native/preferences',
+    '/__ordax/native/first-run-cursor',
+    '/__ordax/native/sync-checkpoint',
+    '/__ordax/native/sync-state',
+  ]){
+    assert.equal(isNativeStateRoute(path),true,path);
+    const f=fixture();f.details.url=allowedOrigin+path;
+    assert.equal(isTrustedNativeRequest(f),true,path);
+    f.details.frame={url:doc};
+    assert.equal(isTrustedNativeRequest(f),false,path+' iframe');
+  }
+  for(const path of [
+    '/__ordax/native/sync-checkpoint/other',
+    '/__ordax/native/sync-state-other',
+    '/__ordax/native/session',
+    '/__ordax/native/files',
+    'https://attacker.invalid/__ordax/native/sync-state',
+    '',
+    null,
+  ])assert.equal(isNativeStateRoute(path),false,String(path));
 });

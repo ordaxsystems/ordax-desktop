@@ -13,7 +13,7 @@ const { readDesktopWindowLayout,desktopMinimumWindowSize,
   fitDesktopWindowPreference,
   createDesktopWindowLayoutPersistence } = require('./window-layout.cjs');
 const { verifyBundledNativeReceipt } = require('./native-build.cjs');
-const { isTrustedNativeRequest } = require('./native-grant-frame.cjs');
+const { isTrustedNativeRequest,isNativeStateRoute } = require('./native-grant-frame.cjs');
 let window=null, runtime=null, stream=null, browserHost=null, updateTimer=null, activationTimer=null, staging=false, idleActivation=null;
 let quitting=false,disarmNativeHostExit=null;
 const HOST_RECOVERY_ARG='--ordax-native-host-recovery-once';
@@ -206,8 +206,7 @@ function authorizeDesktopFileRequests(browserWindow,base,fileToken,localSessionT
           headers['X-OrdaX-Session-Token']=nativeSessionToken;
         if(trusted && target.pathname==='/__ordax/native/device-profile')
           headers['X-OrdaX-Device-Profile-Token']=deviceProfileToken;
-        if(trusted && ['/__ordax/native/first-run','/__ordax/native/preferences',
-                       '/__ordax/native/first-run-cursor'].includes(target.pathname))
+        if(trusted && isNativeStateRoute(target.pathname))
           headers['X-OrdaX-Desktop-State-Token']=stateToken;
         if(trusted && ['/__ordax/native/desktop-surface-state',
                        '/__ordax/native/desktop-surface-command',

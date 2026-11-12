@@ -23,4 +23,16 @@ function isTrustedNativeRequest({
     return false;
   }
 }
-module.exports={isTrustedNativeRequest};
+// One Electron-owned state grant also covers the two canonical Native
+// account continuity stores. They are not new authorities or credentials.
+const NATIVE_STATE_ROUTES=Object.freeze([
+  '/__ordax/native/first-run',
+  '/__ordax/native/preferences',
+  '/__ordax/native/first-run-cursor',
+  '/__ordax/native/sync-state',
+  '/__ordax/native/sync-checkpoint',
+]);
+function isNativeStateRoute(path){
+  return typeof path==='string' && NATIVE_STATE_ROUTES.includes(path);
+}
+module.exports={isTrustedNativeRequest,isNativeStateRoute};
