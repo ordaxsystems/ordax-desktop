@@ -1,6 +1,6 @@
 'use strict';
 // Windows Electron host owned by ordax-desktop. Native OS and Surface retain their own repositories.
-const { app, BrowserWindow, WebContentsView, ipcMain, session, Menu, shell, powerMonitor, screen } = require('electron');
+const { app, BrowserWindow, WebContentsView, ipcMain, session, Menu, shell, dialog, powerMonitor, screen } = require('electron');
 const { createDesktopBrowserHost } = require('./browser-host.cjs');
 const { join, resolve, isAbsolute, basename } = require('node:path');
 const { randomBytes } = require('node:crypto');

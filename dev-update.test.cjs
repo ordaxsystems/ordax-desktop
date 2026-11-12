@@ -67,6 +67,8 @@ test('Electron connects ordax-pull staging to automatic, health-gated idle activ
   assert.match(source,/rejectCandidate\(userData,selected\.sha\)/);
   assert.match(source,/retireHealthyPrevious\(userData,selected\.sha\)/);
   assert.doesNotMatch(source,/Reverter para versão anterior Dev/);
+  assert.match(source,/const \{[^\n]*\bdialog\b[^\n]*\} = require\('electron'\)/);
+  assert.match(source,/createDesktopBrowserHost\(\{window,ipcMain,WebContentsView,session,dialog,log\}\)/);
 });
 
 test('minimized OrdaX updates after 60s of its OWN inattention despite Windows idle being zero',()=>{
