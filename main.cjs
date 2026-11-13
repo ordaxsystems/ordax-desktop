@@ -16,6 +16,9 @@ const { verifyBundledNativeReceipt } = require('./native-build.cjs');
 const { isTrustedNativeRequest,isNativeStateRoute } = require('./native-grant-frame.cjs');
 let window=null, runtime=null, stream=null, browserHost=null, updateTimer=null, activationTimer=null, staging=false, idleActivation=null;
 let quitting=false,disarmNativeHostExit=null;
+// A normal close, a health recovery, and an update relaunch are distinct events.
+// Never infer a crash solely from the absence of a running Electron process.
+let shutdownReason='unclassified';
 const HOST_RECOVERY_ARG='--ordax-native-host-recovery-once';
 const PRODUCT='/system/composition/native/index.html';
 // Explicit stable per-user storage must be set before the instance lock or any
@@ -539,6 +542,7 @@ function monitorNativeHost(child) {
         try {
           log('Rebuilding Native host through one bounded Electron relaunch');
           app.relaunch({args:[...process.argv.slice(1),HOST_RECOVERY_ARG]});
+          shutdownReason='native-host-recovery';
           app.quit();
           return;
         }catch(error){
@@ -553,6 +557,11 @@ function monitorNativeHost(child) {
   });
 }
 app.on('before-quit',()=>{
+  if(quitting)return;
+  // Menu Quit calls before-quit before the window close event. A normal
+  // explicit quit must never be logged as an unexplained termination.
+  if(shutdownReason==='unclassified') shutdownReason='application-quit';
+  log('Desktop shutdown requested: '+shutdownReason);
   quitting=true;
   disarmNativeHostExit?.();
   disarmNativeHostExit=null;
@@ -562,7 +571,10 @@ app.on('before-quit',()=>{
   if(runtime?.child){stopHost(runtime.child,runtime.template);runtime=null;}
   stream?.end();stream=null;
 });
-app.on('window-all-closed',()=>app.quit());
+app.on('window-all-closed',()=>{
+  if(shutdownReason==='unclassified') shutdownReason='all-windows-closed';
+  app.quit();
+});
 app.whenReady().then(async()=>{
   if(!primaryInstance)return;
   const userData=app.getPath('userData');
@@ -640,6 +652,7 @@ app.whenReady().then(async()=>{
     for(const event of displayEvents)screen.removeListener(event,onDisplayChange);
   });
   window.on('close',()=>{
+    if(!quitting && shutdownReason==='unclassified') shutdownReason='window-close';
     if(!geometry.close())log('Desktop window geometry not saved');
   });
   if(savedWindow.maximized)window.maximize();
@@ -778,7 +791,11 @@ app.whenReady().then(async()=>{
           windowMinimized:window.isMinimized(),
           windowFocused:window.isFocused(),
         }),
-        relaunch:()=>{app.relaunch();app.quit();},
+        relaunch:()=>{
+          app.relaunch();
+          shutdownReason='verified-native-update';
+          app.quit();
+        },
       });
       // Safe background discovery, never a startup dependency or live-tree merge.
       setTimeout(()=>{void stageInBackground(userData,template);},5000);
@@ -804,4 +821,8 @@ app.whenReady().then(async()=>{
     log('Startup failed: '+error.message);
     status('Falha ao iniciar: '+error.message+'. Verifique os logs no menu OrdaX.');
   }
-}).catch(e=>{log('Application failed: '+e.message);app.quit();});
+}).catch(e=>{
+  log('Application failed: '+e.message);
+  shutdownReason='application-failure';
+  app.quit();
+});
