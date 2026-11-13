@@ -11,6 +11,9 @@ on:
       - 'ci/windows-cross-version-smoke.ps1'
       - '.github/workflows/desktop-cross-version-proof.yml'
   pull_request:
+    # Drafts validate source without recompiling NSIS on every synchronization.
+    # Moving the PR to Ready explicitly re-runs the full installer gate.
+    types: [opened, synchronize, reopened, ready_for_review]
     paths-ignore: *nonproduct_files
   workflow_dispatch:
 permissions:
@@ -212,10 +215,10 @@ jobs:
   windows-installer:
     name: Canonical Windows installer (detached Desktop + OS)
     needs: windows-source
-    if: needs.windows-source.outputs.installer_required == 'true'
-    uses: ordaxsystems/ordax-os/.github/workflows/windows-desktop-dev.yml@b97220fe7a44e7e794606f40625f218798deb6cc
+    if: needs.windows-source.outputs.installer_required == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
+    uses: ordaxsystems/ordax-os/.github/workflows/windows-desktop-dev.yml@b47f3079d43818e3c7b7521ed2dc15f4d47c4fbc
     with:
-      os_sha: b97220fe7a44e7e794606f40625f218798deb6cc
+      os_sha: b47f3079d43818e3c7b7521ed2dc15f4d47c4fbc
       desktop_sha: ${{ github.event.pull_request.head.sha || github.sha }}
       # The pinned OS publisher creates a draft and then queries it by tag;
       # GitHub returns 404 for that draft. Keep the real NSIS + Windows smoke

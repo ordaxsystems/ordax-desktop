@@ -63,7 +63,12 @@ test('Electron connects ordax-pull staging to automatic, health-gated idle activ
   assert.match(source,/windowMinimized:window\.isMinimized\(\)/);
   assert.match(source,/window\.on\('minimize',windowIdle\.onBackground\)/);
   assert.match(source,/window\.on\('focus',windowIdle\.onAttention\)/);
-  assert.match(source,/app\.relaunch\(\);\s*app\.quit\(\)/);
+  // Preserve relaunch -> classified shutdown -> quit and normal close receipts.
+  assert.match(source,/relaunch:\(\)=>\{\s*app\.relaunch\(\);\s*shutdownReason='verified-native-update';\s*app\.quit\(\)/);
+  assert.match(source,/app\.on\('before-quit',\(\)=>\{\s*if\(quitting\)return;/);
+  assert.match(source,/if\(shutdownReason==='unclassified'\) shutdownReason='application-quit';\s*log\('Desktop shutdown requested: '\+shutdownReason\)/);
+  assert.match(source,/window\.on\('close',\(\)=>\{\s*if\(!quitting && shutdownReason==='unclassified'\) shutdownReason='window-close'/);
+  assert.match(source,/app\.on\('window-all-closed',\(\)=>\{\s*if\(shutdownReason==='unclassified'\) shutdownReason='all-windows-closed'/);
   assert.match(source,/isReady:\(\)=>!devProfile && !staging/);
   assert.match(source,/!browserHost\.hasActiveWork\(\)/);
   assert.match(source,/!window\.webContents\.isCurrentlyAudible\?\.\(\)/);
