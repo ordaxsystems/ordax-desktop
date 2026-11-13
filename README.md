@@ -39,7 +39,9 @@ com `OS_TO_DESKTOP_NSIS_UPGRADE=PASS` e `DESKTOP_TO_OS_NSIS_ROLLBACK=PASS`.
 A revisão `dfb43db3` também concluiu contratos, NSIS, smoke de instalação
 e publicação do artefato na [CI #41797193969](https://github.com/ordaxsystems/ordax-desktop/actions/runs/41797193969).
 Essas provas **não** substituem homologação física da instalação operacional,
-assinatura Stable nem o gate Creator da [PR OS #2403](https://github.com/ordaxsystems/ordax-os/pull/2403).
+assinatura Stable nem os gates atuais de Creator/distribuição. Esses estados
+devem ser lidos da proveniência, do candidato e dos contratos vigentes, não
+inferidos da [PR histórica OS #2403](https://github.com/ordaxsystems/ordax-os/pull/2403).
 
 ## Windows window layout (Electron owner)
 
@@ -49,7 +51,8 @@ RDP and display-metric changes recover windows that would otherwise be offscreen
 This functionality lives in `window-layout.cjs`, not in OS Native or Surface.
 Run `node --test window-layout.test.cjs` for its focused regression tests.
 
-A revisão de empacotamento Windows `0.1.0-alpha.21` consome a fonte Native
-`ordax-os@3bafa3d1e25f644cf089cce1444e1f85c53c2c4b` (inclui a probation da Calculadora e o
-corte do Electron duplicado). O shell continua em `ordax-desktop`, e o
-NSIS Dev segue unsigned; nenhuma instalação física ou trust é inferida da CI.
+Revisões de empacotamento anteriores, versões alpha e SHAs de OS são
+**evidência histórica, não instrução operacional**. O candidato Desktop atual
+deve obter a revisão Native diretamente do workflow/configuração/proveniência
+vigentes. O shell permanece em `ordax-desktop`; CI isolada não prova instalação
+física, assinatura ou trust.
