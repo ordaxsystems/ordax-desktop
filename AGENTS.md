@@ -8,6 +8,7 @@ Este repositório conserva a autoridade dos seus próprios contratos, código e 
 
 - Desktop fixa/consome a revisão direta de `ordax-os` usada pelo candidato Windows e registra sua provenance.
 - A Surface usada por esse candidato já é selecionada pelo lock do OS; **não criar segundo pin da Surface no Desktop**.
+- O build Windows pode materializar temporariamente a revisão **exata já escolhida pelo lock do OS** para reproduzir a composição (`surface-stage.cjs`); isso não cria dependência direta adicional nem autoriza lock/versão Surface própria no Desktop.
 - Apps e Intelligence chegam pelos mecanismos/contratos da composição; não copiar source nem sincronizar HEADs.
 - Uma mudança em Surface ou app não exige PR Desktop até existir intenção real de produzir/validar um novo candidato Windows.
 - Mudanças apenas do host Electron/NSIS ficam neste repo e não disparam USB/kernel/Creator.
