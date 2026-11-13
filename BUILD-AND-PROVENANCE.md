@@ -6,6 +6,7 @@
 - **Sistema e serviços Native:** `ordaxsystems/ordax-os`, pelo commit `os_sha`.
 - **Surface:** revisão fixada exclusivamente no lock
   `ordax-os/docs/contracts/surface-source.json`.
+  `surface-stage.cjs` pode obter/materializar essa revisão em diretório temporário durante o build Windows, mas apenas lendo o lock da composição OS; ele não é um segundo source lock nem autoridade de adoção Surface.
 - **Runtime MCP / Capability Fabric:** seus respectivos owners; nenhuma
   implementação é copiada para o Electron.
 
