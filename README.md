@@ -9,6 +9,12 @@ A importação foi auditada byte a byte contra `ordax-os` commit `526b0e46`.
 [docs/source-import.json](docs/source-import.json) preserva a proveniência
 histórica; não autoriza uma segunda implementação.
 
+## Integração com o produto OrdaX
+
+Desktop empacota e hospeda no Windows **uma composição OrdaX/OS exata e verificável**. Ele não integra a Surface separadamente: a revisão visual já é escolhida pelo lock canônico do OS. O mesmo vale para dependências transitivas de Apps/Intelligence — o Desktop não mantém uma segunda árvore de pins.
+
+Portanto, uma mudança visual pode ser concluída na Surface e adotada no OS sem alterar este repositório. Este repo só precisa avançar quando o host Windows mudar ou quando um novo candidato Desktop realmente for produzido/validado. [Regra canônica de composição](https://github.com/ordaxsystems/ordax-os/blob/main/docs/DEVELOPMENT-WORKFLOW.md#integração-multi-repositório--composição-do-produto-2026-11-13).
+
 ## Build e testes
 
 - Desenvolvimento: [LOCAL-DEVELOPMENT.md](LOCAL-DEVELOPMENT.md).
@@ -21,11 +27,7 @@ Native ativo e o candidato até a decisão; uma falha restaura o ativo sem tocar
 na versão atual. Depois de um boot saudável, a limpeza canônica retira revisões
 superadas, sem tocar no toolchain compartilhado, credenciais ou dados do usuário.
 
-A CI privada `Desktop Source Contracts` valida a fonte e chama um **único**
-produtor Windows do `ordax-os`, pinado por commit exato
-`3bafa3d1e25f644cf089cce1444e1f85c53c2c4b`. O OS continua autoridade dos recursos Native e do lock da Surface;
-o Electron é obtido exclusivamente deste repositório. A proveniência instalada
-registra ambos os SHAs.
+A CI `Desktop Source Contracts` valida a fonte e chama o produtor Windows canônico usando a **revisão OrdaX/OS configurada no workflow/candidato atual**. Não copie para este README um SHA como instrução operacional: a identidade vigente deve ser lida do workflow, do candidato e da proveniência instalada. A revisão da Surface é transitiva à composição do OS e não recebe um segundo pin neste repositório. A proveniência instalada registra as identidades diretas necessárias para reconstruir o candidato.
 
 A antiga árvore `tools/windows-desktop/` foi retirada da
 [PR #2403](https://github.com/ordaxsystems/ordax-os/pull/2403) do OS;
