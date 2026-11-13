@@ -9,14 +9,16 @@
 - **Runtime MCP / Capability Fabric:** seus respectivos owners; nenhuma
   implementação é copiada para o Electron.
 
-## Estado integrado e staging com owner único (05/11/2026)
+## Checkpoint integrado de staging com owner único (05/11/2026)
 
 As PRs Desktop [#6](https://github.com/ordaxsystems/ordax-desktop/pull/6),
 [#7](https://github.com/ordaxsystems/ordax-desktop/pull/7) e
-[#8](https://github.com/ordaxsystems/ordax-desktop/pull/8) estão integradas;
-os gates Windows/NSIS mais recentes estão verdes. A instalação canônica no
-Windows físico recebeu o delta transacional da PR #7 e comprovou boot da
-Surface, encerramento completo do filho Native e relançamento saudável.
+[#8](https://github.com/ordaxsystems/ordax-desktop/pull/8) foram integradas;
+naquele checkpoint, os gates Windows/NSIS da revisão testada estavam verdes e
+a instalação física comprovou boot da Surface, encerramento completo do filho
+Native e relançamento saudável. **Este parágrafo é evidência histórica, não
+status do candidato atual.** Para estado corrente, ler a `main`, o workflow
+ativo e a proveniência/recibo da revisão realmente produzida ou instalada.
 
 `standalone-stage.cjs` aceita **somente** a composição com dois checkouts Git
 exatos, limpos e identificados: `--os-root`/`os_sha` para os serviços Native e
@@ -29,8 +31,10 @@ virtual** na hierarquia OS — sem pasta/implementação Electron correspondente
 
 O único uso permitido de recibos OS-owned antigos é a prova histórica de
 upgrade/rollback em `ci/windows-cross-version-smoke.ps1`; jamais o produtor
-ou o smoke NSIS de novos artefatos. A exclusão da árvore legada da `main`
-do OS é responsabilidade da PR `ordax-os#2403`, não deste repositório.
+ou o smoke NSIS de novos artefatos. A árvore Electron legada foi retirada do
+OS pela [PR #2403](https://github.com/ordaxsystems/ordax-os/pull/2403).
+**Não reintroduzir** segundo pipeline ou implementação Electron no OS; mudanças
+do host pertencem a este repositório.
 
 ## Atualização Dev por impacto real
 
@@ -70,22 +74,21 @@ perfil de desenvolvimento, sem criar agente Electron ou contornar as
 autoridades Runtime/Platform. O smoke NSIS comprova que os módulos de
 Supervisor e os contratos de estado da Surface realmente acompanham o OS
 embutido. O histórico da migração não autoriza reimportar
-`tools/windows-desktop/` do repositório OS: alterações válidas daquela
-árvore precisam ser conciliadas neste owner antes da exclusão canônica pela
-PR `ordax-os#2403`.
+`tools/windows-desktop/` do repositório OS. A exclusão canônica já foi
+concluída pela [PR #2403](https://github.com/ordaxsystems/ordax-os/pull/2403);
+qualquer evolução equivalente deve ocorrer neste owner, sem recriar a árvore
+legada no OS.
 
 ## Único produtor
 
 A CI `.github/workflows/desktop-source.yml` valida este repositório e chama
-o workflow reutilizável do OS
-`ordax-os/.github/workflows/windows-desktop-dev.yml`, com a interface
-`workflow_call` fixada em `3bafa3d1e25f644cf089cce1444e1f85c53c2c4b`.
-Essa referência é a versão compatível do produtor reutilizável, **não** a
-revisão Native empacotada: `os_sha` aponta separadamente para
-`3bafa3d1e25f644cf089cce1444e1f85c53c2c4b` (OS main com Surface #93), e `desktop_sha` para o
-commit exato deste repositório. A versão atual do workflow do OS não
-expõe `workflow_call`; apontar `uses` diretamente para ela quebraria a CI.
-Atualizar `os_sha` exige nova prova NSIS, sem criar outro produtor.
+o workflow reutilizável canônico
+`ordax-os/.github/workflows/windows-desktop-dev.yml`. A revisão exata usada
+em `uses`, o `os_sha` empacotado e o `desktop_sha` são **dados operacionais
+do workflow/candidato**, não valores para copiar neste documento. Consulte a
+configuração vigente e a proveniência gerada a cada execução. Mudá-los exige
+a prova NSIS correspondente, sem criar outro produtor nem assumir que um SHA
+histórico continua compatível.
 
 O produtor verifica ambos os checkouts Git, compara os bytes do Electron aos
 objetos Git, monta os recursos Native a partir do OS, reatesta os recibos
@@ -134,13 +137,14 @@ ambas aprovadas nos dois gates de fonte e instalador NSIS. A homologação
 física da atualização Dev e do encerramento da árvore Native está registrada
 na PR Desktop #7. O canal continua **Dev unsigned**, não Stable.
 
-**Bloqueio independente do Product:** a
+**Checkpoint histórico de Product — resolvido em 05/11/2026:** a
 [issue Runtime #327](https://github.com/ordaxsystems/ordax-runtime/issues/327)
-identifica risco de `machine_binding` do Product coincidir com o MCP auxiliar.
-A matrícula Owner OAuth/PKCE fica bloqueada até o owner Runtime corrigir a
-vinculação e o owner Platform confirmar a identidade existente. O status
-operacional e os gates Product continuam tendo como SSOT o
-`ordax-os/docs/CURRENT-STATE.md`, sem replicar cadastro ou credenciais aqui.
+registrou o risco de `machine_binding` do Product coincidir com o MCP auxiliar
+e foi posteriormente **fechada**. Não tratá-la como bloqueio corrente nem
+reimplementar sua correção no Desktop. Readiness, matrícula Owner, identidade,
+grants e quaisquer bloqueios atuais devem ser obtidos do
+`ordax-os/docs/CURRENT-STATE.md` e dos owners Runtime/Platform vivos, sem
+replicar cadastro ou credenciais aqui.
 
 **SSOT Product:** a autoridade da inscrição, do binário e dos grants fica em
 `ordax-os/docs/CURRENT-STATE.md`, na política
@@ -159,12 +163,15 @@ permanece no histórico Git, sem código de extração paralelo.
 
 O workflow manual `.github/workflows/desktop-cross-version-proof.yml` é **somente de validação**. Ele baixa os artefatos NSIS já compilados dos runs históricos do OS e do novo Desktop, exige ambos SHAs Git e os SHA-256 dos executáveis, e testa em runner Windows descartável: instalação do OS antigo → upgrade para Desktop → rollback. Não existe outro produtor, não há rebuild, nem execução no desktop pessoal. O teste falha fechado se não puder ler o artefato histórico ou verificar sua proveniência; não troca certificados nem publica Stable.
 
-## MVP Windows — atualização da Calculadora e corte do Electron (06/11/2026)
+## Histórico de candidato Windows — 06/11/2026
 
-O NSIS `0.1.0-alpha.21` empacota `ordax-os@3bafa3d1e25f644cf089cce1444e1f85c53c2c4b`, incluindo
-as PRs #2443 (probation/health da Calculadora) e #2403 (fonte Electron única).
-O produtor canônico reutilizável permanece em `.github/workflows/windows-desktop-dev.yml`
-do OS, fixado por SHA exato; os bytes do shell são os desta revisão
-`ordax-desktop`, atestados separadamente. `ordax-surface` continua fixada
-pelo lock oficial do OS. A CI Windows prova instalação isolada, não uso no
-Desktop físico nem autorização para instalar/ativar componentes unsigned.
+O candidato NSIS `0.1.0-alpha.21` empacotou a revisão
+`ordax-os@3bafa3d1e25f644cf089cce1444e1f85c53c2c4b`, incluindo as mudanças
+então presentes das PRs #2443 e #2403. **Esses identificadores preservam
+proveniência daquela entrega e não definem o candidato atual.** A revisão
+corrente deve ser lida do workflow, da configuração e do recibo/proveniência
+gerados. O produtor canônico reutilizável continua em
+`.github/workflows/windows-desktop-dev.yml` no OS; os bytes do shell pertencem
+a `ordax-desktop` e a Surface continua transitivamente selecionada pelo lock
+oficial do OS. CI Windows isolada não prova uso no Desktop físico nem autoriza
+instalação/ativação de componentes unsigned.
