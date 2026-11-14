@@ -221,9 +221,9 @@ jobs:
       os_sha: b47f3079d43818e3c7b7521ed2dc15f4d47c4fbc
       desktop_sha: ${{ github.event.pull_request.head.sha || github.sha }}
       # PRs validate the exact NSIS producer without publishing disposable
-      # releases. Only the canonical main push may promote those verified bytes
-      # to the unsigned Desktop Dev prerelease channel.
-      publish_dev_release: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+      # releases. Canonical main pushes and explicit manual recovery dispatches
+      # may promote only the bytes rebuilt and verified by this reusable gate.
+      publish_dev_release: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
     permissions:
       # Required by the pinned reusable OS workflow, even with publish disabled.
       contents: write
