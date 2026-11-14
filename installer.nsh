@@ -12,6 +12,8 @@
 ; builder's existing tasklist/taskkill fallback instead of inventing another
 ; process authority. _CHECK_APP_RUNNING still owns prompts, graceful close,
 ; retry and force-kill semantics; only its process-enumeration backend changes.
+!include "getProcessInfo.nsh"
+Var /GLOBAL pid
 Var /GLOBAL IsPowerShellAvailable
 !macro customCheckAppRunning
   StrCpy $IsPowerShellAvailable "1"
