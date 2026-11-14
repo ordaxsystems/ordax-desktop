@@ -2,7 +2,7 @@
 // Development-only Windows host: one OS checkout and its exact pinned Surface.
 // The Electron shell can live in ordax-desktop without copying system/ source.
 process.env.ORDAX_DESKTOP_LOCAL_DEV='1';
-const {existsSync,lstatSync,readFileSync,realpathSync,symlinkSync,mkdirSync}=require('node:fs');
+const {existsSync,lstatSync,readFileSync,readlinkSync,symlinkSync,mkdirSync}=require('node:fs');
 const {resolve,join,dirname}=require('node:path');
 const {execFileSync,spawn}=require('node:child_process');
 const {resolveInstalledGit}=require('./checkout.cjs');
@@ -55,8 +55,18 @@ function prepare(){
     const link=join(root,'system','surface',segment);
     const stat=lstatSync(target);
     if(!stat.isDirectory()||stat.isSymbolicLink())fail('unsafe Surface source '+segment);
-    if(existsSync(link)){
-      if(realpathSync(link)!==realpathSync(target))fail('refusing to replace existing visual path '+link);
+    let mounted=null;
+    try{mounted=lstatSync(link)}
+    catch(error){if(error?.code!=='ENOENT')throw error}
+    if(mounted){
+      if(!mounted.isSymbolicLink())fail('refusing to replace existing visual path '+link);
+      let linked;
+      try{linked=resolve(dirname(link),readlinkSync(link))}
+      catch{fail('cannot verify existing visual junction '+link)}
+      const normalize=path=>process.platform==='win32'
+        ?resolve(path).toLowerCase():resolve(path);
+      if(normalize(linked)!==normalize(target))
+        fail('refusing to replace existing visual path '+link);
     }else{
       mkdirSync(dirname(link),{recursive:true});
       symlinkSync(target,link,'junction');

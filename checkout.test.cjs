@@ -1,7 +1,7 @@
 'use strict';
 const { test }=require('node:test');
 const assert=require('node:assert/strict');
-const { mkdtempSync, mkdirSync, writeFileSync, rmSync }=require('node:fs');
+const { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync }=require('node:fs');
 const { tmpdir }=require('node:os');
 const { join }=require('node:path');
 const { hasDesktopHostContract, git, dependenciesForStage }=require('./checkout.cjs');
@@ -37,20 +37,17 @@ test('rejects a partial or incompatible desktop host contract',()=>{
 test('accepts matching versioned desktop host capabilities',()=>{
   const {root,emulator}=fixture();
   try {
-    const canonical = require('../../tools/windows-emulator/desktop-host-contract.json');
+    // The Desktop validates the contract shape; the OS owner tests and ships
+    // the actual Native host implementation. Do not reach into an old
+    // monorepo-relative ../../tools path from this separated repository.
+    const canonical={schema:1,desktopHost:{
+      contractVersion:1,
+      nativeSource:'system/composition/native/index.html',
+      capabilities:['no-external-browser','dynamic-loopback-port','external-state-directory'],
+    }};
     writeFileSync(join(emulator,'desktop-host-contract.json'),JSON.stringify(canonical));
     assert.equal(hasDesktopHostContract(root),true);
   } finally { rmSync(root,{recursive:true,force:true}); }
-});
-
-test('canonical desktop host declares the environment variables it promises',()=>{
-  const {readFileSync}=require('node:fs');
-  const root=join(__dirname,'../..');
-  const supervisor=readFileSync(join(root,'tools/windows-emulator/dev-supervisor.mjs'),'utf8');
-  const vite=readFileSync(join(root,'tools/windows-emulator/vite.config.mjs'),'utf8');
-  assert.ok(supervisor.includes('ORDAX_EMULATOR_NO_BROWSER'));
-  assert.ok(vite.includes('ORDAX_EMULATOR_PORT'));
-  assert.ok(vite.includes('ORDAX_EMULATOR_STATE_DIR'));
 });
 
 test('staging launches Native Vite from verified cache rather than candidate junction',async t=>{
@@ -66,16 +63,40 @@ test('staging launches Native Vite from verified cache rather than candidate jun
   try{
     const result=await dependenciesForStage(candidate,root,root);
     assert.equal(result,verified);
-    const {realpathSync,lstatSync,existsSync}=require('node:fs');
+    const {lstatSync,existsSync}=require('node:fs');
     const junction=join(candidate,'node_modules');
     assert.equal(lstatSync(junction).isSymbolicLink(),true);
-    assert.equal(realpathSync(junction),realpathSync(verified));
+    assert.equal(result,verified);
     assert.equal(existsSync(join(result,'vite','bin','vite.js')),true);
   }finally{
     t.mock.restoreAll();
     const {rmdirSync}=require('node:fs');
     const junction=join(candidate,'node_modules');
     if(require('node:fs').existsSync(junction))rmdirSync(junction);
+    rmSync(root,{recursive:true,force:true});
+  }
+});
+
+test('stage refuses a pre-existing junction to an unverified compiler',async t=>{
+  const root=mkdtempSync(join(tmpdir(),'ordax-staged-vite-wrong-link-'));
+  const candidate=join(root,'candidate');
+  const verified=join(root,'verified','node_modules');
+  const wrong=join(root,'wrong','node_modules');
+  mkdirSync(verified,{recursive:true});
+  mkdirSync(wrong,{recursive:true});
+  mkdirSync(candidate,{recursive:true});
+  symlinkSync(wrong,join(candidate,'node_modules'),process.platform==='win32'?'junction':'dir');
+  const cache=require('./toolchain-cache.cjs');
+  t.mock.method(cache,'ensureRuntimeToolchainIsolated',async()=>verified);
+  try{
+    await assert.rejects(
+      dependenciesForStage(candidate,root,root),
+      /does not match verified cache/
+    );
+  }finally{
+    t.mock.restoreAll();
+    const junction=join(candidate,'node_modules');
+    try{require('node:fs').unlinkSync(junction);}catch{try{require('node:fs').rmdirSync(junction);}catch{}}
     rmSync(root,{recursive:true,force:true});
   }
 });

@@ -1,11 +1,10 @@
 'use strict';
 // Canonical Native runtime checkout; the bundled snapshot is a safe offline fallback.
 const { spawn } = require('node:child_process');
-const { join, win32: win32Path } = require('node:path');
+const { dirname, isAbsolute, join, resolve, win32: win32Path } = require('node:path');
 const { createHash } = require('node:crypto');
 const BUNDLED_GIT_LOCK = require('./git-toolchain-lock.json');
-const { existsSync, lstatSync, readFileSync, realpathSync, symlinkSync } = require('node:fs');
-const { OFFICIAL_REMOTE } = require('./runtime.cjs');
+const { existsSync, lstatSync, readFileSync, readlinkSync, symlinkSync } = require('node:fs');
 
 // Windows Desktop Dev prefers an official pinned MinGit in private resources.
 function bundledGit({platform=process.platform,resourcesPath=process.resourcesPath,
@@ -124,6 +123,10 @@ let child;
 }
 
 async function isTrusted(checkout) {
+  // Only trust validation needs the OS distribution authority. Keep that
+  // dependency lazy so cache/staging source tests do not require a packaged
+  // runtime-template or a sibling OS checkout merely to import this module.
+  const { OFFICIAL_REMOTE } = require('./runtime.cjs');
   const origin = await git(['-C',checkout,'config','--get','remote.origin.url'],checkout,10000);
   return origin.ok && origin.stdout === OFFICIAL_REMOTE;
 }
@@ -159,19 +162,39 @@ function dependencies(checkout,template,userData=null) {
 async function dependenciesForStage(checkout,template,userData){
   const dir=join(checkout,'node_modules');
   // Vite executes from the VERIFIED toolchain directory, not through the
-  // candidate junction. The junction remains for imports resolved by the
-  // candidate's Native configuration. Never accept an arbitrary directory.
-  function alreadyMounted(){
-    if(!lstatSync(dir).isSymbolicLink())
+  // candidate junction. Existing links are never trusted by type alone:
+  // verify the canonical cache first and require this junction to target it.
+  // Node realpathSync/existsSync can fail while following Windows junctions
+  // on supported Owner machines, so inspect the reparse point with lstat and
+  // compare its explicit readlink target without traversing it.
+  const linkStat=()=>{
+    try{return lstatSync(dir)}
+    catch(error){if(error?.code==='ENOENT')return null;throw error}
+  };
+  const assertJunction=stat=>{
+    if(!stat?.isSymbolicLink())
       throw Error('Staged compiler dependency is not a junction');
-    return realpathSync(dir);
-  }
-  if(existsSync(dir))return alreadyMounted();
+  };
+  let stat=linkStat();
+  if(stat)assertJunction(stat);
   const {ensureRuntimeToolchainIsolated}=require('./toolchain-cache.cjs');
   const source=await ensureRuntimeToolchainIsolated(template,userData);
-  if(existsSync(dir))return alreadyMounted();
+  const normalized=path=>{
+    const absolute=resolve(path);
+    return process.platform==='win32'?absolute.toLowerCase():absolute;
+  };
+  const mountedTarget=current=>{
+    assertJunction(current);
+    const link=readlinkSync(dir);
+    const target=isAbsolute(link)?link:resolve(dirname(dir),link);
+    if(normalized(target)!==normalized(source))
+      throw Error('Staged compiler dependency does not match verified cache');
+    return source;
+  };
+  stat=linkStat();
+  if(stat)return mountedTarget(stat);
   symlinkSync(source,dir,process.platform==='win32'?'junction':'dir');
-  return source;
+  return mountedTarget(linkStat());
 }
 
 // Only the immutable Desktop Dev transaction manager may materialize source
