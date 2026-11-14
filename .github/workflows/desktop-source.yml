@@ -216,9 +216,9 @@ jobs:
     name: Canonical Windows installer (detached Desktop + OS)
     needs: windows-source
     if: needs.windows-source.outputs.installer_required == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
-    uses: ordaxsystems/ordax-os/.github/workflows/windows-desktop-dev.yml@b47f3079d43818e3c7b7521ed2dc15f4d47c4fbc
+    uses: ordaxsystems/ordax-os/.github/workflows/windows-desktop-dev.yml@5dd51ee8c7145ca205215f06603b537396f6f714
     with:
-      os_sha: b47f3079d43818e3c7b7521ed2dc15f4d47c4fbc
+      os_sha: 5dd51ee8c7145ca205215f06603b537396f6f714
       desktop_sha: ${{ github.event.pull_request.head.sha || github.sha }}
       # PRs validate the exact NSIS producer without publishing disposable
       # releases. Canonical main pushes and explicit manual recovery dispatches
