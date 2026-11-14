@@ -220,11 +220,10 @@ jobs:
     with:
       os_sha: b47f3079d43818e3c7b7521ed2dc15f4d47c4fbc
       desktop_sha: ${{ github.event.pull_request.head.sha || github.sha }}
-      # The pinned OS publisher creates a draft and then queries it by tag;
-      # GitHub returns 404 for that draft. Keep the real NSIS + Windows smoke
-      # gate, but fail closed on publication until its canonical owner fixes it.
-      # Do not create duplicate draft releases on PR or main pushes.
-      publish_dev_release: false
+      # PRs validate the exact NSIS producer without publishing disposable
+      # releases. Only the canonical main push may promote those verified bytes
+      # to the unsigned Desktop Dev prerelease channel.
+      publish_dev_release: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
     permissions:
       # Required by the pinned reusable OS workflow, even with publish disabled.
       contents: write
