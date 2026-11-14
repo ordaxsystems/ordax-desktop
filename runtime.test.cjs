@@ -3,11 +3,16 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { readFileSync } = require('node:fs');
 const { join, resolve } = require('node:path');
-const { resolveTemplate, developmentOsRoot, runtimeStateDirectory, OFFICIAL_REMOTE } = require('./runtime.cjs');
+const {
+  resolveTemplate, developmentOsRoot, defaultDevelopmentOsRoot,
+  runtimeStateDirectory, OFFICIAL_REMOTE,
+} = require('./runtime.cjs');
 const { resolveInstalledGit } = require('./checkout.cjs');
 
 test('Dev and MVP share the single authoritative distribution contract', () => {
-  const source = JSON.parse(readFileSync(join(__dirname,'../../docs/contracts/distribution-profiles.json'),'utf8'));
+  const source = JSON.parse(readFileSync(join(
+    defaultDevelopmentOsRoot(__dirname),'docs/contracts/distribution-profiles.json'
+  ),'utf8'));
   assert.equal(OFFICIAL_REMOTE,'https://github.com/'+source.source_authority.repository+'.git');
   assert.equal(source.source_authority.branch,'main');
   assert.equal(source.source_authority.permanent_profile_forks_allowed,false);
@@ -17,14 +22,16 @@ test('Dev and MVP share the single authoritative distribution contract', () => {
   assert.ok(require('./package.json').build.extraResources.some(
     source => source.to === 'runtime-template/docs/contracts/distribution-profiles.json'));
 });
-test('desktop dev uses canonical source in un-packaged mode', () => {
-  assert.equal(resolveTemplate(__dirname, 'ignored', false), resolve(__dirname,'../..'));
+test('desktop source defaults to the canonical sibling OS checkout', () => {
+  const sibling=resolve(__dirname,'..','ordax-os');
+  assert.equal(defaultDevelopmentOsRoot(__dirname),sibling);
+  assert.equal(resolveTemplate(__dirname, 'ignored', false), sibling);
+  assert.equal(developmentOsRoot(__dirname,{}),sibling);
 });
 test('explicit detached OS checkout must be absolute and must not be a symlink', () => {
-  assert.equal(developmentOsRoot(__dirname,{}),resolve(__dirname,'../..'));
+  const sibling=resolve(__dirname,'..','ordax-os');
   assert.throws(()=>developmentOsRoot(__dirname,{ORDAX_DESKTOP_OS_CHECKOUT:'../ordax-os'}),/absolute path/);
-  assert.equal(developmentOsRoot(__dirname,{ORDAX_DESKTOP_OS_CHECKOUT:resolve(__dirname,'../..')}),
-    resolve(__dirname,'../..'));
+  assert.equal(developmentOsRoot(__dirname,{ORDAX_DESKTOP_OS_CHECKOUT:sibling}),sibling);
 });
 test('packaged Windows uses offline verified snapshot with isolated state', () => {
   const template = resolveTemplate('ignored','C:\\OrdaXResources',true);
@@ -72,7 +79,7 @@ test('installed Electron loads canonical Native composition only after attested 
 });
 
 test('Windows installer producer pins the exact OS and private Desktop Git commits', () => {
-  const workflow = readFileSync(join(__dirname,'../../.github/workflows/windows-desktop-dev.yml'),'utf8').replace(/\r\n/g,'\n');
+  const workflow = readFileSync(join(defaultDevelopmentOsRoot(__dirname),'.github/workflows/windows-desktop-dev.yml'),'utf8').replace(/\r\n/g,'\n');
   // The OS no longer owns an Electron source or event-triggered Windows producer.
   // It accepts only exact immutable OS and Desktop SHAs via workflow_call.
   assert.match(workflow, /\n  workflow_call:\n/);
@@ -86,7 +93,7 @@ test('Windows installer producer pins the exact OS and private Desktop Git commi
 });
 
 test('Desktop owner invokes the only canonical Windows installer producer', () => {
-  const workflow = readFileSync(join(__dirname,'../../.github/workflows/windows-desktop-dev.yml'),'utf8').replace(/\r\n/g,'\n');
+  const workflow = readFileSync(join(defaultDevelopmentOsRoot(__dirname),'.github/workflows/windows-desktop-dev.yml'),'utf8').replace(/\r\n/g,'\n');
   const events = workflow.replace(/\r\n/g,'\n').split('\npermissions:')[0];
   assert.match(events, /\n  workflow_call:\n/);
   assert.doesNotMatch(events, /\n  (?:workflow_dispatch|pull_request|push):\n/);
@@ -113,6 +120,14 @@ test('Electron locks the canonical user profile before requesting a single insta
   const path = main.indexOf("app.setPath('userData',desktopUserData)");
   const lock = main.indexOf('app.requestSingleInstanceLock()');
   assert.ok(name >= 0 && name < path && path < lock);
+});
+
+test('direct source Desktop reuses the one verified Surface preparation without changing packaged or HMR profiles', () => {
+  const main = readFileSync(join(__dirname,'main.cjs'),'utf8');
+  assert.ok(main.includes("if(!app.isPackaged && !devProfile && !localDevelopment)"));
+  assert.ok(main.includes("const surfaceRoot=require('./local-dev.cjs').prepare();"));
+  assert.ok(main.includes('process.env.ORDAX_DESKTOP_SURFACE_ROOT=surfaceRoot;'));
+  assert.equal((main.match(/require\('\.\/local-dev\.cjs'\)\.prepare\(\)/g)||[]).length,1);
 });
 
 test('packaged NSIS smoke uses a separate Electron profile and journal', () => {
@@ -170,7 +185,7 @@ test('Windows package excludes Linux-only Alpine package declaration without dro
     '!surface/runtime/media_runtime_probe.py', '!surface/runtime/audio-session.sh',
     '!surface/runtime/physical_ata_probe.py', '!surface/runtime/physical_kernel_log_probe.py', '!surface/runtime/physical_performance_probe.py',
   ]);
-  const workflow = readFileSync(join(__dirname, '../../.github/workflows/windows-desktop-dev.yml'), 'utf8').replace(/\r\n/g,'\n');
+  const workflow = readFileSync(join(defaultDevelopmentOsRoot(__dirname), '.github/workflows/windows-desktop-dev.yml'), 'utf8').replace(/\r\n/g,'\n');
   assert.ok(workflow.includes('node out/ordax-desktop-source/package-inventory.cjs --compiled'));
   assert.ok(!workflow.includes('node tools/windows-desktop/package-inventory.cjs'));
   assert.ok(workflow.includes('Build unsigned Windows installer'));

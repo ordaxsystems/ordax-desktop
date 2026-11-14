@@ -106,6 +106,11 @@ async function startHost({root,template=root,stateDirectory,userData,log,builtAs
       ORDAX_DESKTOP_COMPONENT_VERIFIER_ROOT:template,
       ORDAX_DESKTOP_DISPLAY_TOKEN:displayToken,
       ORDAX_DESKTOP_RENDERED_SOURCE_SHA:sourceSha,
+      // Explicit child-only proof that this is unversioned source execution,
+      // never a packaged/staged candidate. It authorizes only an ephemeral
+      // Native session; diagnostics still cannot be persisted without a SHA.
+      ORDAX_DESKTOP_UNVERSIONED_SOURCE_SESSION:
+        sourceSha==="" && !staticHost ? "1" : "",
       ORDAX_EMULATOR_PORT:String(port),ORDAX_EMULATOR_STATE_DIR:stateDirectory,
       ORDAX_DESKTOP_ASSETS_ROOT:builtAssetsRoot??''},
   });

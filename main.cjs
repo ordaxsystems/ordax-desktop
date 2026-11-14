@@ -39,6 +39,13 @@ if(process.platform==='win32' && app.isPackaged && !devProfile &&
     process.env.ORDAX_DESKTOP_MCP_DEV === undefined)
   process.env.ORDAX_DESKTOP_MCP_DEV='1';
 const localDevelopment = !app.isPackaged && process.env.ORDAX_DESKTOP_LOCAL_DEV === '1';
+// Direct source execution uses the canonical Owner Dev profile, but it still
+// needs the same verified OS/Surface preparation as the isolated HMR launcher.
+// Reuse the one prepare() owner; never copy Surface source into Desktop.
+if(!app.isPackaged && !devProfile && !localDevelopment) {
+  const surfaceRoot=require('./local-dev.cjs').prepare();
+  process.env.ORDAX_DESKTOP_SURFACE_ROOT=surfaceRoot;
+}
 const explicitTestDirectory = process.env.ORDAX_DESKTOP_TEST_PROFILE_DIR || '';
 // Smoke tests on an already-used Windows machine need a unique directory,
 // regardless of whether Electron resolves appData from Windows known folders

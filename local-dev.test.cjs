@@ -167,5 +167,19 @@ test('detached OS checkout refuses relative paths and incompatible Surface locks
 test('development launcher explicitly uses the canonical Native MCP supervisor without test-profile bypass',()=>{
   const source=require('node:fs').readFileSync(join(__dirname,'local-dev.cjs'),'utf8');
   assert.match(source,/ORDAX_DESKTOP_LOCAL_DEV:'1',ORDAX_DESKTOP_MCP_DEV:'1'/);
+  assert.match(source,/resolveInstalledGit\(\{resourcesPath:''\}\)/);
   assert.doesNotMatch(source,/ORDAX_DESKTOP_MCP_DEV:'1'[^}]*ORDAX_DESKTOP_TEST_PROFILE/);
+});
+
+test('importing local development preparation does not select another Desktop profile',()=>{
+  const script=[
+    "delete process.env.ORDAX_DESKTOP_LOCAL_DEV;",
+    "require("+JSON.stringify(entry)+");",
+    "process.stdout.write(process.env.ORDAX_DESKTOP_LOCAL_DEV||'unset');",
+  ].join('');
+  const r=spawnSync(process.execPath,['-e',script],{
+    encoding:'utf8',env:{...process.env,ORDAX_DESKTOP_LOCAL_DEV:undefined},
+  });
+  assert.equal(r.status,0,r.stderr);
+  assert.equal(r.stdout,'unset');
 });

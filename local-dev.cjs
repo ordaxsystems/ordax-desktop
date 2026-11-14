@@ -1,7 +1,8 @@
 'use strict';
 // Development-only Windows host: one OS checkout and its exact pinned Surface.
 // The Electron shell can live in ordax-desktop without copying system/ source.
-process.env.ORDAX_DESKTOP_LOCAL_DEV='1';
+// Importing this module is side-effect free; only the launcher child opts into
+// the isolated Local Development profile.
 const {existsSync,lstatSync,readFileSync,readlinkSync,symlinkSync,mkdirSync}=require('node:fs');
 const {resolve,join,dirname}=require('node:path');
 const {execFileSync,spawn}=require('node:child_process');
@@ -12,7 +13,7 @@ const SHA40=/^[0-9a-f]{40}$/;
 function git(root,...args){
   // Local Git reads must neither prompt for credentials nor rely on the
   // launcher's PATH containing the globally installed Windows Git binary.
-  return execFileSync(resolveInstalledGit(),
+  return execFileSync(resolveInstalledGit({resourcesPath:''}),
     ['-c','credential.helper=','-C',root,...args],{
       encoding:'utf8',windowsHide:true,timeout:15000,
       env:{...process.env,GIT_TERMINAL_PROMPT:'0'},

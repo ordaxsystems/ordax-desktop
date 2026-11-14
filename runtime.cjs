@@ -2,11 +2,16 @@
 const { join, resolve, isAbsolute } = require('node:path');
 const { readFileSync, existsSync, lstatSync } = require('node:fs');
 
-// Only un-packaged local development may point the Electron shell to a
-// separate OS checkout. The installed product always uses its bundled template.
+// Only un-packaged source execution may point the Electron shell to a
+// separate OS checkout. After Desktop extraction the canonical default is the
+// sibling ordax-os checkout; the installed product always uses its bundled
+// runtime-template and never follows this development path.
+function defaultDevelopmentOsRoot(appDirectory) {
+  return resolve(appDirectory, '..', 'ordax-os');
+}
 function developmentOsRoot(appDirectory, env = process.env) {
   const explicit = env.ORDAX_DESKTOP_OS_CHECKOUT;
-  if (explicit === undefined || explicit === '') return resolve(appDirectory, '../..');
+  if (explicit === undefined || explicit === '') return defaultDevelopmentOsRoot(appDirectory);
   if (typeof explicit !== 'string' || !isAbsolute(explicit))
     throw Error('Desktop development OS checkout must be an absolute path');
   const root = resolve(explicit);
@@ -19,12 +24,15 @@ function developmentOsRoot(appDirectory, env = process.env) {
 // A single OS distribution contract owns both Dev Git origin and public
 // signed-release restrictions. The installer embeds the read-only snapshot.
 function distributionAuthority() {
-  const localDevelopment = process.env.ORDAX_DESKTOP_LOCAL_DEV === '1';
-  const source = join(localDevelopment ? developmentOsRoot(__dirname)
-    : resolve(__dirname, '../..'), 'docs', 'contracts', 'distribution-profiles.json');
   const packaged = join(process.resourcesPath || '', 'runtime-template', 'docs',
     'contracts', 'distribution-profiles.json');
-  const path = localDevelopment ? source : existsSync(source) ? source : packaged;
+  // A packaged install must prefer its immutable embedded contract even if a
+  // developer happens to have a sibling checkout. Source Electron/Node has no
+  // runtime-template under resources, so only then may it resolve the verified
+  // development checkout (explicit or canonical sibling).
+  const source = join(developmentOsRoot(__dirname), 'docs', 'contracts',
+    'distribution-profiles.json');
+  const path = existsSync(packaged) ? packaged : source;
   const contract = JSON.parse(readFileSync(path, 'utf8'));
   const authority = contract.source_authority;
   const development = contract.profiles?.['owner-development'];
@@ -46,8 +54,10 @@ const sourceAuthority = distributionAuthority();
 const OFFICIAL_REMOTE = 'https://github.com/' + sourceAuthority.repository + '.git';
 function resolveTemplate(appDirectory, resourcesPath, isPackaged) {
   if (isPackaged) return join(resourcesPath, 'runtime-template');
-  return process.env.ORDAX_DESKTOP_LOCAL_DEV === '1'
-    ? developmentOsRoot(appDirectory) : resolve(appDirectory, '../..');
+  return developmentOsRoot(appDirectory);
 }
 function runtimeStateDirectory(userData) { return join(userData, 'native-state'); }
-module.exports = { OFFICIAL_REMOTE, resolveTemplate, developmentOsRoot, runtimeStateDirectory };
+module.exports = {
+  OFFICIAL_REMOTE, resolveTemplate, developmentOsRoot, defaultDevelopmentOsRoot,
+  runtimeStateDirectory,
+};
