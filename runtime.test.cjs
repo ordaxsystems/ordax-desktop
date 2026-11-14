@@ -149,6 +149,17 @@ test('NSIS Owner Dev mode is forced to the current Windows user without a select
   assert.ok(!nsisScript.includes('StrCpy $isForceMachineInstall "1"'));
 });
 
+test('NSIS app-running detection uses the bounded tasklist fallback instead of slow 32-bit CIM', () => {
+  const nsisScript = readFileSync(join(__dirname,'installer.nsh'),'utf8');
+  assert.match(nsisScript, /!macro customCheckAppRunning/);
+  assert.ok(nsisScript.includes('!include "getProcessInfo.nsh"'));
+  assert.ok(nsisScript.includes('Var /GLOBAL pid'));
+  assert.ok(nsisScript.includes('Var /GLOBAL IsPowerShellAvailable'));
+  assert.ok(nsisScript.includes('StrCpy $IsPowerShellAvailable "1"'));
+  assert.ok(nsisScript.includes('!insertmacro _CHECK_APP_RUNNING'));
+  assert.ok(!/customCheckAppRunning[\s\S]*Get-CimInstance/.test(nsisScript));
+});
+
 test('Windows package excludes Linux-only Alpine package declaration without dropping the shared Native tree', () => {
   const resources = require('./package.json').build.extraResources;
   const system = resources.filter(item => item.to === 'runtime-template/system');
