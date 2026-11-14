@@ -150,11 +150,16 @@ replicar cadastro ou credenciais aqui.
 **SSOT Product:** a autoridade da inscrição, do binário e dos grants fica em
 `ordax-os/docs/CURRENT-STATE.md`, na política
 `ordax-os/docs/contracts/runtime-component-trust-policy.json` e na evidência
-`ordax-os/docs/evidence/desktop-runtime-windows-candidate-2026-10-31.json`.
+`ordax-os/docs/evidence/desktop-runtime-windows-candidate-2026-11-14.json`.
 Uma prova de executável DEV offline não concede autorização de instalação;
 respeitar `installation_authorized_by_candidate` e os gates de assinatura.
 A shell Electron não copia agentes, credenciais nem capacidades do MCP auxiliar.
-O recibo de Surface saudável não comprova `mcpReady` do Product.
+O recibo de Surface saudável também não comprova prontidão Product. O OS só
+projeta `productDispatchReady` após validar o handoff launch-bound do **mesmo**
+`ordax-runtime`, seu `/readiness` local e o `capabilities_digest` canônico.
+Isso continua sendo readiness de dispatch, não autorização do cliente; os campos
+legados `mcpReady` e `centralSessionAttested` permanecem falsos e binding/grants
+continuam pertencendo à Platform.
 
 Histórico de importação: `docs/source-import.json`. O produtor de
 migração `owner-export` foi desativado após a importação; a evidência

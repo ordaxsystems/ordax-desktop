@@ -144,7 +144,11 @@ distinto dos demais grants. O Electron só adiciona
 quando a requisição parte do WebContents da Surface verificada; remove
 qualquer cabeçalho homônimo fornecido pelo renderer. O host repassa esse token
 apenas ao Native filho, que valida a identidade e permanece fail-closed.
-Esse grant local **não** inscreve o Device Product, não transfere os grants do
-MCP auxiliar e não estabelece `mcpReady` sem sessão e capability digest reais.
-Uma revisão Native rejeitada conserva o rollback até ser revalidada com a shell
-corrigida; não apagar evidências ou forçar sucesso.
+Esse grant local **não** inscreve o Device Product e não transfere os grants do
+MCP auxiliar. A prontidão de dispatch pertence ao Runtime canônico: o Supervisor
+só pode projetar `productDispatchReady` depois de validar o handoff launch-bound,
+o `/readiness` do mesmo processo e seu `capabilities_digest`. Essa prontidão não
+autoriza o ChatGPT e não cria/renova binding; binding e grants continuam na
+Platform. Os campos legados `mcpReady` e `centralSessionAttested` não devem ser
+reanimados como prova de sessão. Uma revisão Native rejeitada conserva o rollback
+até ser revalidada com a shell corrigida; não apagar evidências ou forçar sucesso.
