@@ -5,6 +5,19 @@
   StrCpy $isForceCurrentInstall "1"
 !macroend
 
+; electron-builder normally probes running app processes through the 32-bit
+; Windows PowerShell host. On the physical Owner Desktop, one Win32_Process
+; CIM query takes ~17 seconds, and the upgrade retry/kill sequence can exceed
+; the bounded installer window before file extraction begins. Reuse the
+; builder's existing tasklist/taskkill fallback instead of inventing another
+; process authority. _CHECK_APP_RUNNING still owns prompts, graceful close,
+; retry and force-kill semantics; only its process-enumeration backend changes.
+Var /GLOBAL IsPowerShellAvailable
+!macro customCheckAppRunning
+  StrCpy $IsPowerShellAvailable "1"
+  !insertmacro _CHECK_APP_RUNNING
+!macroend
+
 ; Instrument only supported electron-builder NSIS extension points. Do not
 ; override installer transaction, elevation, upgrade, progress or rollback.
 ; This diagnostic journal contains stages only (no machine names or credentials).
