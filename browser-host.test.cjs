@@ -306,6 +306,46 @@ test('download IPC rejects oversized and foreign-window requests before save dia
   assert.equal(cancelled,true,'canceling the save dialog cancels the download');
 });
 
+test('synchronous Windows save-dialog failure cannot leak into IPC or strand a download',async t=>{
+  for(const failsCancellation of [false,true]){
+    const f=fixture();t.after(()=>f.host.dispose());
+    f.post({type:'tab.open',tabId:'tab-dialog',url:'https://example.com/file'});
+    await Promise.resolve();
+    const wc=View.all[0].webContents;
+    let cancels=0, saved=0, resumed=0;
+    const item=new EventEmitter();
+    item.getFilename=()=> 'file.txt';
+    item.pause=()=>{};
+    item.setSavePath=()=>{saved++;};
+    item.resume=()=>{resumed++;};
+    item.cancel=()=>{
+      cancels++;
+      if(failsCancellation)throw Error('Chromium transfer cancellation refused');
+    };
+    f.browserSession.emit('will-download',{
+      preventDefault(){throw Error('unexpected rejection');},
+    },item,wc);
+    const pending=f.ui.sent.map(x=>x.value).find(x=>
+      x.type==='browser-download'&&x.status==='pending');
+    assert.ok(pending);
+    f.dialog.showSaveDialog=()=>{throw Error('Windows dialog unavailable');};
+    assert.doesNotThrow(()=>f.post({type:'download.approve',id:pending.id}),
+      'the privileged native dialog error must never escape into the renderer IPC');
+    assert.equal(cancels,1,'a synchronous failure revokes the pending download consent');
+    assert.equal(saved,0,'failed dialog cannot assign a save destination');
+    assert.equal(resumed,0,'failed dialog cannot resume a transfer');
+    assert.equal(f.host.hasActiveWork(),failsCancellation,
+      'only an unconfirmed Chromium cancellation must retain the update gate');
+    f.post({type:'download.approve',id:pending.id});
+    assert.equal(cancels,1,'a rejected dialog must not be reopened for the same download');
+    if(failsCancellation){
+      item.emit('done',{},'cancelled');
+      assert.equal(f.host.hasActiveWork(),false,
+        'confirmed terminal Chromium event releases the previously blocked update');
+    }
+  }
+});
+
 test('download consent is single-use and cancelled pending approval never writes a file',async t=>{
   const f=fixture();t.after(()=>f.host.dispose());
   f.post({type:'tab.open',tabId:'tab-download',url:'https://example.com'});

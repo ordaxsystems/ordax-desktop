@@ -433,9 +433,20 @@ function createDesktopBrowserHost({window, ipcMain, WebContentsView, session, di
     // One consent dialog per item; a late answer must never revive a
     // cancelled/completed download or an already disposed browser host.
     record.phase='approving';
-    void dialog.showSaveDialog(window,{title:'Salvar arquivo',defaultPath:record.fileName,
-      buttonLabel:'Salvar',properties:['createDirectory','showOverwriteConfirmation']})
-      .then(result=>{
+    let saveRequest;
+    try {
+      saveRequest=dialog.showSaveDialog(window,{title:'Salvar arquivo',
+        defaultPath:record.fileName,buttonLabel:'Salvar',
+        properties:['createDirectory','showOverwriteConfirmation']});
+    } catch(error) {
+      // A destroyed/unavailable Windows dialog can throw before returning a
+      // Promise. Revoke consent without leaking the exception through IPC.
+      // Failed Chromium cancellation retains the existing update safety gate.
+      cancelDownload(command.id,record);
+      log('Browser save dialog failed: '+error.message);
+      return;
+    }
+    void Promise.resolve(saveRequest).then(result=>{
         if(disposed||downloads.get(command.id)!==record||record.phase!=='approving')return;
         if(result.canceled||!result.filePath){cancelDownload(command.id,record);return;}
         try {
