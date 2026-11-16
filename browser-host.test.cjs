@@ -1069,3 +1069,89 @@ test('browser disposal continues cleanup after a single Chromium detach exceptio
   assert.equal(f.ipcMain.listenerCount('ordax:desktop-browser:command'),0);
   assert.equal(f.browserSession.listenerCount('will-download'),0);
 });
+
+test('failed attachment with failed detach stays owned and blocks a new Native session until cleaned',async t=>{
+  const f=fixture();t.after(()=>f.host.dispose());
+  const add=f.window.contentView.addChildView;
+  const remove=f.window.contentView.removeChildView;
+  let failDetach=true;
+  f.window.contentView.addChildView=function(view){
+    this.views.push(view);
+    throw Error('Chromium attached before rejecting window add');
+  };
+  f.window.contentView.removeChildView=function(view){
+    if(failDetach){failDetach=false;throw Error('Chromium detach unavailable');}
+    return remove.call(this,view);
+  };
+  f.post({type:'tab.open',tabId:'failed-create',url:'https://example.com'});
+  assert.deepEqual(f.host.getSnapshot().tabs,[],
+    'failed tab must not be visible as a valid Native browser tab');
+  assert.equal(f.window.contentView.views.length,1,
+    'a partial native attachment remains physically attached during failure');
+  assert.equal(f.host.hasActiveWork(),true,
+    'orphaned Chromium views must block ordax-pull');
+  f.window.contentView.addChildView=add;
+  f.post({type:'tab.open',tabId:'must-wait',url:'https://example.com'});
+  assert.deepEqual(f.host.getSnapshot().tabs,[],
+    'no new web view while a failed attachment remains unverified');
+  f.host.setTrustedOrigin('http://127.0.0.1:43124');
+  assert.equal(f.window.contentView.views.length,0);
+  assert.equal(f.host.hasActiveWork(),false);
+  f.post({type:'tab.open',tabId:'revoked',url:'https://example.com'});
+  assert.deepEqual(f.host.getSnapshot().tabs,[],
+    'old Native document cannot open tabs after origin replacement');
+});
+
+test('failed pre-attachment Chromium close retries without removing an unattached view',async t=>{
+  const f=fixture();t.after(()=>f.host.dispose());
+  const hook=WC.prototype.setWindowOpenHandler;
+  const close=WC.prototype.close;
+  let fail=true;
+  WC.prototype.setWindowOpenHandler=()=>{throw Error('Chromium popup policy unavailable');};
+  WC.prototype.close=function(){
+    if(fail){fail=false;throw Error('Chromium WebContents close unavailable');}
+    return close.call(this);
+  };
+  t.after(()=>{WC.prototype.setWindowOpenHandler=hook;WC.prototype.close=close;});
+  const remove=f.window.contentView.removeChildView;
+  let removeCalls=0;
+  f.window.contentView.removeChildView=function(view){
+    removeCalls++;
+    return remove.call(this,view);
+  };
+  f.post({type:'tab.open',tabId:'failed-hook',url:'https://example.com'});
+  assert.equal(f.host.hasActiveWork(),true);
+  assert.equal(removeCalls,0,'a view never attached must not be forcibly detached');
+  f.host.setTrustedOrigin('http://127.0.0.1:43124');
+  assert.equal(View.all[0].webContents.closed,true);
+  assert.equal(removeCalls,0);
+  assert.equal(f.host.hasActiveWork(),false);
+});
+
+test('tab close retries only its unfinished Chromium step, not an already-detached view',async t=>{
+  const f=fixture();t.after(()=>f.host.dispose());
+  f.post({type:'tab.open',tabId:'transient-close',url:'https://example.com'});
+  await Promise.resolve();
+  const view=View.all[0];
+  const original=view.webContents.close;
+  let fail=true;
+  view.webContents.close=function(){
+    if(fail){fail=false;throw Error('WebContents unavailable');}
+    return original.call(this);
+  };
+  const remove=f.window.contentView.removeChildView;
+  let removes=0;
+  f.window.contentView.removeChildView=function(v){
+    removes++;
+    if(!this.views.includes(v))throw Error('Chromium view was already detached');
+    return remove.call(this,v);
+  };
+  f.post({type:'tab.close',tabId:'transient-close'});
+  assert.equal(f.host.hasActiveWork(),true);
+  assert.equal(removes,1);
+  f.post({type:'tab.close',tabId:'transient-close'});
+  assert.equal(removes,1,'do not detach an already detached Chromium view twice');
+  assert.equal(view.webContents.closed,true);
+  assert.equal(f.host.hasActiveWork(),false);
+  assert.deepEqual(f.host.getSnapshot().tabs,[]);
+});

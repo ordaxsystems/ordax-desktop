@@ -62,6 +62,32 @@ function createDesktopBrowserHost({window, ipcMain, WebContentsView, session, di
   const downloads = new Map();
   // A Chromium view that could not be detached or closed must block idle updates.
   const failedCleanup = new Set();
+  // Preserve partial native teardown progress. Removing an already-detached
+  // view a second time can itself fail and indefinitely strand a close retry.
+  const cleanupProgress = new WeakMap();
+  const cleanupView = (view,{mayBeAttached=true}={}) => {
+    let progress=cleanupProgress.get(view);
+    if(!progress){
+      progress={detached:!mayBeAttached,closed:false};
+      cleanupProgress.set(view,progress);
+    }
+    if(!progress.detached){
+      try {window.contentView.removeChildView(view);progress.detached=true;}
+      catch(error){log('Browser view detach failed: '+String(error?.message??error));}
+    }
+    if(!progress.closed){
+      try {
+        if(!view.webContents.isDestroyed())view.webContents.close();
+        progress.closed=true;
+      } catch(error){log('Browser WebContents close failed: '+String(error?.message??error));}
+    }
+    if(!progress.detached || !progress.closed){
+      failedCleanup.add(view);
+      return false;
+    }
+    failedCleanup.delete(view);
+    return true;
+  };
   // Chromium media events also cover silent video that is not reported by
   // isCurrentlyAudible(). Track each WebContents rather than the OS idle clock.
   const activeMedia = new WeakMap();
@@ -108,6 +134,12 @@ function createDesktopBrowserHost({window, ipcMain, WebContentsView, session, di
     trustedOrigin=null;
     originEpoch++;
     let revoked=true;
+    // Failed tab creation may leave an unregistered but still-attached
+    // Chromium view. Do not grant the replacement Native session until it
+    // is cleaned as well as the regular registered tabs.
+    const registered=new Set(tabs.values());
+    for(const view of [...failedCleanup])
+      if(!registered.has(view) && !cleanupView(view))revoked=false;
     for(const id of [...tabs.keys()])if(!close(id))revoked=false;
     for(const [id,record] of downloads)
       if(record.phase==='downloading')cancelDownload(id,record);
@@ -255,10 +287,11 @@ function createDesktopBrowserHost({window, ipcMain, WebContentsView, session, di
   };
 
   const open = (id,url='',{background=false}={}) => {
-    if (!TAB_ID.test(id) || tabs.has(id) || tabs.size>=MAX_TABS) return;
+    if (!TAB_ID.test(id) || tabs.has(id) || tabs.size>=MAX_TABS ||
+        failedCleanup.size>0) return;
     const target=safeWebUrl(url,{blank:true});
     if (!target) return;
-    let view;
+    let view,attachmentAttempted=false;
     try {
       view=new WebContentsView({webPreferences:{
       partition:'persist:ordax-desktop-internet',nodeIntegration:false,
@@ -306,6 +339,7 @@ function createDesktopBrowserHost({window, ipcMain, WebContentsView, session, di
     for(const event of ['did-start-loading','did-stop-loading','did-navigate','did-navigate-in-page','page-title-updated'])
       wc.on(event,()=>publish());
     tabs.set(id,view);
+    attachmentAttempted=true;
     window.contentView.addChildView(view);
     if(!background || activeTabId===null)activeTabId=id;
     layout();
@@ -320,11 +354,9 @@ function createDesktopBrowserHost({window, ipcMain, WebContentsView, session, di
           tabs.delete(id);
           if(activeTabId===id)activeTabId=[...tabs.keys()].at(-1)??null;
         }
-        // addChildView may have attached its view before throwing.
-        try {window.contentView.removeChildView(view);}
-        catch(cleanupError){log('Browser view detach failed: '+String(cleanupError?.message??cleanupError));}
-        try {if(!view.webContents.isDestroyed())view.webContents.close();}
-        catch(cleanupError){log('Browser view close failed: '+String(cleanupError?.message??cleanupError));}
+        // A partial native add or synchronous close failure must remain
+        // owned even after removing the failed tab from Native snapshots.
+        cleanupView(view,{mayBeAttached:attachmentAttempted});
         try {layout();publish();}
         catch(cleanupError){log('Browser tab recovery failed: '+String(cleanupError?.message??cleanupError));}
       }
@@ -341,26 +373,9 @@ function createDesktopBrowserHost({window, ipcMain, WebContentsView, session, di
     }
     invalidatePage(id,view.webContents);
     activeMedia.delete(view.webContents);
-    let detached=false,closed=false;
-    try {
-      window.contentView.removeChildView(view);
-      detached=true;
-    } catch(error) {
-      log('Browser view detach failed: '+String(error?.message??error));
-    }
-    try {
-      if(!view.webContents.isDestroyed())view.webContents.close();
-      closed=true;
-    } catch(error) {
-      log('Browser WebContents close failed: '+String(error?.message??error));
-    }
-    if(!detached || !closed) {
-      // Keep the exact failed view owned and block ordax-pull. A subsequent
-      // close or origin revocation can retry without trusting a stale tab.
-      failedCleanup.add(view);
-      return false;
-    }
-    failedCleanup.delete(view);
+    // The same Chromium teardown policy owns ordinary close, Native origin
+    // revocation, failed tab creation and retry after a partial operation.
+    if(!cleanupView(view))return false;
     tabs.delete(id);
     if(activeTabId===id)activeTabId=[...tabs.keys()].at(-1)??null;
     if(!disposed) {
@@ -551,6 +566,9 @@ function createDesktopBrowserHost({window, ipcMain, WebContentsView, session, di
     // One teardown owner for normal tab close, Native rollback and disposal.
     // A single Chromium exception cannot skip cleanup of the remaining tabs.
     for(const id of [...tabs.keys()])close(id);
+    // Retry orphaned failed-creation views as well; never discard their
+    // exact references before a complete detach + WebContents close.
+    for(const view of [...failedCleanup])cleanupView(view);
   };
   window.once('closed',dispose);
   return Object.freeze({dispose,setTrustedOrigin,getSnapshot:snapshot,hasActiveWork});
