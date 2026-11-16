@@ -252,7 +252,9 @@ function createDesktopBrowserHost({window, ipcMain, WebContentsView, session, di
     if (!TAB_ID.test(id) || tabs.has(id) || tabs.size>=MAX_TABS) return;
     const target=safeWebUrl(url,{blank:true});
     if (!target) return;
-    const view=new WebContentsView({webPreferences:{
+    let view;
+    try {
+      view=new WebContentsView({webPreferences:{
       partition:'persist:ordax-desktop-internet',nodeIntegration:false,
       contextIsolation:true,sandbox:true,webSecurity:true,
       javascript:true,webviewTag:false,
@@ -302,6 +304,25 @@ function createDesktopBrowserHost({window, ipcMain, WebContentsView, session, di
     if(!background || activeTabId===null)activeTabId=id;
     layout();
     if(loadPage(id,view,target,{closeOnThrow:true}))publish();
+    } catch(error) {
+      // Window attachment, Chromium policy hooks, or view layout can fail
+      // synchronously while Electron is tearing down. Tab creation is atomic:
+      // restore the old active tab and close the exact failed WebContents.
+      log('Browser tab creation failed: '+String(error?.message??error));
+      if(view){
+        if(tabs.get(id)===view){
+          tabs.delete(id);
+          if(activeTabId===id)activeTabId=[...tabs.keys()].at(-1)??null;
+        }
+        // addChildView may have attached its view before throwing.
+        try {window.contentView.removeChildView(view);}
+        catch(cleanupError){log('Browser view detach failed: '+String(cleanupError?.message??cleanupError));}
+        try {if(!view.webContents.isDestroyed())view.webContents.close();}
+        catch(cleanupError){log('Browser view close failed: '+String(cleanupError?.message??cleanupError));}
+        try {layout();publish();}
+        catch(cleanupError){log('Browser tab recovery failed: '+String(cleanupError?.message??cleanupError));}
+      }
+    }
   };
   const close = id => {
     const view=tabs.get(id);
