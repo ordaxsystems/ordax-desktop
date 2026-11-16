@@ -1007,3 +1007,65 @@ test('download pause failure cancels unapproved transfer without losing activity
     }
   }
 });
+
+test('Chromium detach failure blocks Native origin replacement until exact view is cleaned',async t=>{
+  const f=fixture();t.after(()=>f.host.dispose());
+  f.post({type:'tab.open',tabId:'old-tab',url:'https://example.com/old'});
+  await Promise.resolve();
+  const remove=f.window.contentView.removeChildView;
+  let fail=true;
+  f.window.contentView.removeChildView=function(view){
+    if(fail){fail=false;throw Error('Chromium detach unavailable');}
+    return remove.call(this,view);
+  };
+  assert.throws(()=>f.host.setTrustedOrigin('http://127.0.0.1:43124'),
+    /Cannot revoke previous Chromium browser views/);
+  assert.equal(f.host.hasActiveWork(),true,
+    'a view with unproven detachment cannot allow idle update');
+  assert.deepEqual(f.host.getSnapshot().tabs.map(tab=>tab.id),['old-tab']);
+  const sent=f.ui.sent.length;
+  f.post({type:'snapshot.request'});
+  assert.equal(f.ui.sent.length,sent,'old Native renderer must lose its IPC privilege');
+  f.host.setTrustedOrigin('http://127.0.0.1:43124');
+  assert.deepEqual(f.host.getSnapshot().tabs,[]);
+  assert.equal(f.host.hasActiveWork(),false);
+  assert.equal(f.window.contentView.views.length,0);
+});
+
+test('Chromium close failure keeps tab owned and blocks idle update until retry',async t=>{
+  const f=fixture();t.after(()=>f.host.dispose());
+  f.post({type:'tab.open',tabId:'fragile',url:'https://example.com'});
+  await Promise.resolve();
+  const wc=View.all[0].webContents;
+  const close=wc.close;
+  let fail=true;
+  wc.close=function(){
+    if(fail){fail=false;throw Error('Chromium close unavailable');}
+    return close.call(this);
+  };
+  assert.doesNotThrow(()=>f.post({type:'tab.close',tabId:'fragile'}));
+  assert.equal(f.host.hasActiveWork(),true);
+  assert.equal(f.host.getSnapshot().tabs.length,1);
+  f.post({type:'tab.close',tabId:'fragile'});
+  assert.equal(wc.closed,true);
+  assert.equal(f.host.hasActiveWork(),false);
+  assert.deepEqual(f.host.getSnapshot().tabs,[]);
+});
+
+test('browser disposal continues cleanup after a single Chromium detach exception',async()=>{
+  const f=fixture();
+  f.post({type:'tab.open',tabId:'first',url:'https://example.com/first'});
+  f.post({type:'tab.open',tabId:'second',url:'https://example.com/second'});
+  await Promise.resolve();
+  const remove=f.window.contentView.removeChildView;
+  let fail=true;
+  f.window.contentView.removeChildView=function(view){
+    if(fail){fail=false;throw Error('Chromium detach unavailable');}
+    return remove.call(this,view);
+  };
+  assert.doesNotThrow(()=>f.host.dispose());
+  assert.equal(View.all[0].webContents.closed,true);
+  assert.equal(View.all[1].webContents.closed,true);
+  assert.equal(f.ipcMain.listenerCount('ordax:desktop-browser:command'),0);
+  assert.equal(f.browserSession.listenerCount('will-download'),0);
+});

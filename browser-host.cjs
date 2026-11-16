@@ -60,6 +60,8 @@ function createDesktopBrowserHost({window, ipcMain, WebContentsView, session, di
       typeof WebContentsView !== 'function') throw new TypeError('Electron Desktop browser owner is required');
   const tabs = new Map();
   const downloads = new Map();
+  // A Chromium view that could not be detached or closed must block idle updates.
+  const failedCleanup = new Set();
   // Chromium media events also cover silent video that is not reported by
   // isCurrentlyAudible(). Track each WebContents rather than the OS idle clock.
   const activeMedia = new WeakMap();
@@ -105,11 +107,15 @@ function createDesktopBrowserHost({window, ipcMain, WebContentsView, session, di
     // cancellation fails must still hold the updater gate until Chromium ends.
     trustedOrigin=null;
     originEpoch++;
-    for(const id of [...tabs.keys()])close(id);
+    let revoked=true;
+    for(const id of [...tabs.keys()])if(!close(id))revoked=false;
     for(const [id,record] of downloads)
       if(record.phase==='downloading')cancelDownload(id,record);
     requestedViewport=null;
     viewport=null;
+    // Never grant a replacement Native session while an old Chromium view
+    // cannot be proven detached and closed.
+    if(!revoked)throw Error('Cannot revoke previous Chromium browser views');
     trustedOrigin=next;
   };
   const isTrustedMainDocument = () => {
@@ -138,7 +144,7 @@ function createDesktopBrowserHost({window, ipcMain, WebContentsView, session, di
   // no mouse/keyboard input. This is the same browser owner that handles
   // downloads and WebContentsViews, not a second activity tracker.
   const hasActiveWork = () => {
-    if (disposed || downloads.size>0) return true;
+    if (disposed || downloads.size>0 || failedCleanup.size>0) return true;
     for (const view of tabs.values()) {
       try {
         const wc=view.webContents;
@@ -326,21 +332,42 @@ function createDesktopBrowserHost({window, ipcMain, WebContentsView, session, di
   };
   const close = id => {
     const view=tabs.get(id);
-    if(!view)return;
-    // Unapproved downloads have no owned save destination once their tab
-    // closes. Do not strand a paused item and block ordax-pull forever.
-    // Already approved transfers keep running, as in a normal browser.
+    if(!view)return true;
+    // Unapproved downloads lose their save consent when their owner closes;
+    // approved transfers retain the existing independent download lifecycle.
     for(const [downloadId,record] of downloads){
       if(record.contents===view.webContents && record.phase!=='downloading')
         cancelDownload(downloadId,record);
     }
     invalidatePage(id,view.webContents);
     activeMedia.delete(view.webContents);
-    window.contentView.removeChildView(view);
+    let detached=false,closed=false;
+    try {
+      window.contentView.removeChildView(view);
+      detached=true;
+    } catch(error) {
+      log('Browser view detach failed: '+String(error?.message??error));
+    }
+    try {
+      if(!view.webContents.isDestroyed())view.webContents.close();
+      closed=true;
+    } catch(error) {
+      log('Browser WebContents close failed: '+String(error?.message??error));
+    }
+    if(!detached || !closed) {
+      // Keep the exact failed view owned and block ordax-pull. A subsequent
+      // close or origin revocation can retry without trusting a stale tab.
+      failedCleanup.add(view);
+      return false;
+    }
+    failedCleanup.delete(view);
     tabs.delete(id);
     if(activeTabId===id)activeTabId=[...tabs.keys()].at(-1)??null;
-    if(!view.webContents.isDestroyed())view.webContents.close();
-    layout();publish();
+    if(!disposed) {
+      try {layout();publish();}
+      catch(error){log('Browser view layout after close failed: '+String(error?.message??error));}
+    }
+    return true;
   };
   const navigate=(id,url)=>{
     const view=tabs.get(id),target=safeWebUrl(url,{blank:true});
@@ -521,12 +548,9 @@ function createDesktopBrowserHost({window, ipcMain, WebContentsView, session, di
     window.removeListener('resize',onResize);
     browserSession.removeListener('will-download',onDownload);
     for(const [id,record] of downloads)cancelDownload(id,record);
-    for(const [id,v] of [...tabs]) {
-      invalidatePage(id,v.webContents);
-      window.contentView.removeChildView(v);
-      if(!v.webContents.isDestroyed())v.webContents.close();
-      tabs.delete(id);
-    }
+    // One teardown owner for normal tab close, Native rollback and disposal.
+    // A single Chromium exception cannot skip cleanup of the remaining tabs.
+    for(const id of [...tabs.keys()])close(id);
   };
   window.once('closed',dispose);
   return Object.freeze({dispose,setTrustedOrigin,getSnapshot:snapshot,hasActiveWork});
