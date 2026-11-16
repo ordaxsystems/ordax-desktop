@@ -1,20 +1,19 @@
 'use strict';
-// Development-only, source-pinned Electron shell update without a 600+ MB NSIS.
-// Never updates Native OS, Surface, product Runtime, model bytes or signed Stable.
+// Windows Dev shell inspector and recovery for interrupted legacy transactions.
+// Installed Electron embeds the SHA-256 ASAR header in its executable.
+// Replacing app.asar alone cannot satisfy that binary-level integrity gate.
+// Native OS/Surface updates remain owned by the verified ordax-pull channel.
 const fs=require('node:fs');
-const os=require('node:os');
 const path=require('node:path');
 const {createHash}=require('node:crypto');
-const {execFileSync,spawn}=require('node:child_process');
-const {setTimeout:delay}=require('node:timers/promises');
-const SCHEMA='ordax.desktop-shell-delta/1';
+const {execFileSync}=require('node:child_process');
 const REMOTE='https://github.com/ordaxsystems/ordax-desktop.git';
 const SHA=/^[0-9a-f]{40}$/;
 const MAX_HEADER=12*1024*1024,MAX_BLOB=2*1024*1024,MAX_ARCHIVE=250*1024*1024;
-const BLOCK=4*1024*1024;
-const digest=b=>createHash('sha256').update(b).digest('hex');
+const digest=bytes=>createHash('sha256').update(bytes).digest('hex');
 const decodeJson=text=>JSON.parse(String(text).replace(/^\uFEFF/,''));
 const assert=(cond,message)=>{if(!cond)throw Error(message)};
+
 function parseArchive(bytes){
   assert(Buffer.isBuffer(bytes)&&bytes.length>=16&&bytes.length<=MAX_ARCHIVE,'Untrusted ASAR size');
   const marker=bytes.readUInt32LE(0),outer=bytes.readUInt32LE(4);
@@ -28,21 +27,7 @@ function parseArchive(bytes){
     header.files&&typeof header.files==='object','Invalid ASAR inventory');
   return {header,payload:bytes.subarray(start),start};
 }
-function encodeArchive(header,payload,extra=[]){
-  const json=Buffer.from(JSON.stringify(header),'utf8');
-  assert(json.length>0&&json.length<=MAX_HEADER,'Delta ASAR header too large');
-  const padding=(4-json.length%4)%4;
-  const pickle=4+json.length+padding;
-  const prefix=Buffer.alloc(8+4+pickle);
-  prefix.writeUInt32LE(4,0);
-  prefix.writeUInt32LE(4+pickle,4);
-  prefix.writeUInt32LE(pickle,8);
-  prefix.writeUInt32LE(json.length,12);
-  json.copy(prefix,16);
-  const output=Buffer.concat([prefix,payload,...extra]);
-  assert(output.length<=MAX_ARCHIVE,'Delta ASAR exceeds development limit');
-  return output;
-}
+
 function fileBytes(archive,name){
   const record=archive.header.files[name];
   assert(record&&typeof record==='object'&&!record.unpacked&&!record.link&&
@@ -58,40 +43,7 @@ function fileBytes(archive,name){
     'Existing ASAR integrity failed: '+name);
   return data;
 }
-function integrity(bytes){
-  const blocks=[];
-  for(let i=0;i<bytes.length;i+=BLOCK)blocks.push(digest(bytes.subarray(i,i+BLOCK)));
-  return {algorithm:'SHA256',hash:digest(bytes),blockSize:BLOCK,blocks};
-}
-function buildDelta(archive,approvedFiles){
-  const source=parseArchive(archive);
-  const expected=Object.entries(approvedFiles);
-  assert(expected.length>0&&expected.length<=30,'Unexpected shell source set');
-  const header=structuredClone(source.header),changes=[],extra=[];
-  let offset=source.payload.length;
-  for(const [name,bytes] of expected){
-    assert(/^[a-z][a-z0-9-]{0,80}\.(?:cjs|mjs)$/.test(name)&&
-      Buffer.isBuffer(bytes)&&bytes.length>0&&bytes.length<=MAX_BLOB,
-      'Unsafe trusted shell source');
-    const old=source.header.files[name];
-    assert(!old||(!old.unpacked&&!old.link&&Number.isSafeInteger(old.size)),
-      'Shell update would alter an unpacked or linked module');
-    if(old&&fileBytes(source,name).equals(bytes))continue;
-    header.files[name]={...(old??{}),size:bytes.length,offset:String(offset),
-      integrity:integrity(bytes)};
-    offset+=bytes.length;
-    extra.push(bytes);
-    changes.push(name);
-  }
-  if(!changes.length)return {changed:false,archive,changes};
-  const next=encodeArchive(header,source.payload,extra);
-  const checked=parseArchive(next);
-  for(const [name,bytes] of expected)assert(fileBytes(checked,name).equals(bytes),
-    'Delta self-verification failed: '+name);
-  assert(Object.keys(checked.header.files).length>=Object.keys(source.header.files).length,
-    'Delta unexpectedly removed archive entries');
-  return {changed:true,archive:next,changes};
-}
+
 function git(repo,args,{encoding='utf8'}={}){
   return execFileSync('git',['-C',repo,...args],{
     encoding,timeout:25000,maxBuffer:4*1024*1024,windowsHide:true,
@@ -211,31 +163,7 @@ function recoverInterrupted(loc,{list=processList}={}){
   }
   return status;
 }
-function prepare({repo,profile,live},approvedSources=officialSources(repo)){
-  const {revision,manifest,files}=approvedSources;
-  const previous=fs.readFileSync(live),archive=parseArchive(previous);
-  const installed=JSON.parse(fileBytes(archive,'package.json').toString('utf8'));
-  assert(installed.name===manifest.name&&installed.version===manifest.version,
-    'Installed Desktop identity differs from source');
-  const previousReceipt=path.join(profile,'desktop-shell-delta-receipt.json');
-  if(fs.existsSync(previousReceipt)){
-    const rec=decodeJson(fs.readFileSync(previousReceipt,'utf8'));
-    assert(rec.installed_asar_sha256===digest(previous),
-      'Installed ASAR does not match previous developer delta receipt');
-  }
-  const result=buildDelta(previous,files);
-  const receipt={schema:SCHEMA,source_commit:revision,old_asar_sha256:digest(previous),
-    new_asar_sha256:digest(result.archive),changed_files:result.changes,
-    bytes:result.archive.length};
-  if(!result.changed)return {changed:false,receipt};
-  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'ordax-desktop-shell-delta-'));
-  const candidate=path.join(dir,'app.asar');
-  fs.writeFileSync(candidate,result.archive,{flag:'wx',mode:0o600});
-  fs.writeFileSync(path.join(dir,'receipt.json'),JSON.stringify(receipt,null,2)+'\n',{flag:'wx'});
-  assert(digest(fs.readFileSync(candidate))===receipt.new_asar_sha256,
-    'Staged Desktop delta hash mismatch');
-  return {changed:true,dir,candidate,receipt};
-}
+
 function processList(exe){
   // Fail closed even when another installation has the same executable name.
   assert(path.basename(exe)==='OrdaX OS Desktop Dev.exe','Unexpected Desktop process name');
@@ -245,168 +173,65 @@ function processList(exe){
   return output.split(/\r?\n/).filter(line=>
     /^"OrdaX OS Desktop Dev\.exe","[0-9]+",/i.test(line));
 }
-function childAlive(child){
-  if(child.exitCode!==null||child.signalCode!==null)return false;
-  if(!Number.isSafeInteger(child.pid)||child.pid<1)return false;
-  try{process.kill(child.pid,0);return true}
-  catch(error){if(error.code==='ESRCH')return false;throw error}
-}
-async function stopFailedBoot(child,{alive=childAlive,terminate}={}){
-  // Only the newly launched candidate's PID, never an unrelated user's process.
-  if(!alive(child))return 'ALREADY_STOPPED';
-  assert(Number.isSafeInteger(child.pid)&&child.pid>0,'Invalid candidate Desktop PID');
-  const stop=terminate||((pid)=>execFileSync('taskkill.exe',[
-    '/PID',String(pid),'/T','/F'
-  ],{encoding:'utf8',timeout:15000,windowsHide:true}));
-  try{await stop(child.pid)}
-  catch(error){if(alive(child))throw Error('Cannot stop unhealthy candidate: '+error.message)}
-  for(let i=0;i<25;i++){
-    if(!alive(child))return 'STOPPED';
-    await delay(200);
-  }
-  throw Error('Candidate Desktop did not exit after targeted stop');
-}
-async function startAndConfirm(loc,logSize){
-  const child=spawn(loc.exe,[],{cwd:loc.install,detached:true,stdio:'ignore',windowsHide:false});
-  // Retain error observation even after detaching: do not crash on spawn failure.
-  let spawnError=null;
-  child.on('error',error=>{spawnError=error});
-  child.unref();
-  let healthy=false;
-  try{
-    const logfile=path.join(loc.profile,'desktop.log');
-    // Windows cold startup can spend over 40s verifying the existing Native
-    // Git candidate before it emits the first log line. Permit up to 90s,
-    // but never accept a startup without the exact post-swap health receipt.
-    for(let i=0;i<60;i++){
-      await delay(1500);
-      if(spawnError)throw spawnError;
-      if(!childAlive(child))return false;
-      if(fs.existsSync(logfile)){
-        const stats=fs.statSync(logfile);
-        if(stats.size>=logSize&&stats.size-logSize<=3*1024*1024){
-          const fd=fs.openSync(logfile,'r');
-          try{
-            const b=Buffer.alloc(stats.size-logSize);
-            fs.readSync(fd,b,0,b.length,logSize);
-            if(b.toString('utf8').includes('Native Surface ready:')){
-              healthy=true;
-              return true;
-            }
-          } finally{fs.closeSync(fd)}
-        }
-      }
-    }
-    return false;
-  }finally{
-    // A hung candidate must be stopped before the prior ASAR can be restored.
-    if(!healthy)await stopFailedBoot(child);
-  }
-}
-async function install(loc,prepared,drivers={}){
-  if(!prepared.changed)return 'CURRENT';
-  // Injectable only for offline transaction proofs; CLI always uses native guards.
-  const list=drivers.list||processList, boot=drivers.boot||startAndConfirm;
-  const restart=drivers.restart||((exe,installation)=>{
-    const child=spawn(exe,[],{cwd:installation,detached:true,stdio:'ignore'});
-    child.on('error',()=>{});child.unref();
-  });
-  const {live,exe,install:installation,profile}=loc;
-  const nativeIdle=()=>{
-    const state=decodeJson(fs.readFileSync(
-      path.join(profile,'desktop-dev-update-state.json'),'utf8'));
-    assert(!state.pendingSha&&!state.attemptedSha,
-      'Native OS update transaction active; cannot swap Desktop shell');
-  };
-  assert(!list(exe).length,
-    'Desktop is running. Close the window normally before applying a shell delta');
-  nativeIdle();
-  const backup=path.join(installation,'resources','app.asar.delta-rollback');
-  const temporary=path.join(installation,'resources','app.asar.delta-ready');
-  const recFile=path.join(profile,'desktop-shell-delta-receipt.json');
-  assert(!fs.existsSync(backup)&&!fs.existsSync(temporary)&&
-    !fs.existsSync(recFile+'.tmp'),
-    'Unresolved previous Desktop delta; preserve for manual recovery');
-  assert(digest(fs.readFileSync(live))===prepared.receipt.old_asar_sha256,
-    'Installed Desktop changed after delta preparation');
-  let backedUp=false,swapped=false,committed=false;
-  const removeBackup=drivers.removeBackup||((file)=>fs.rmSync(file));
-  try{
-    // Copy and hash verification belong inside the cleanup transaction.
-    fs.copyFileSync(prepared.candidate,temporary,fs.constants.COPYFILE_EXCL);
-    assert(digest(fs.readFileSync(temporary))===prepared.receipt.new_asar_sha256,
-      'Copied Desktop delta verification failed');
-    assert(!list(exe).length,'Desktop reopened before shell swap');
-    nativeIdle();
-    fs.renameSync(live,backup);backedUp=true;
-    fs.renameSync(temporary,live);swapped=true;
-    const log=path.join(profile,'desktop.log');
-    const offset=fs.existsSync(log)?fs.statSync(log).size:0;
-    assert(await boot(loc,offset),'Native Surface did not become healthy after shell update');
-    assert(digest(fs.readFileSync(live))===prepared.receipt.new_asar_sha256,
-      'Desktop changed during startup');
-    const record={schema:'ordax.desktop-shell-delta-installed/1',
-      desktop_source_sha:prepared.receipt.source_commit,
-      installed_asar_sha256:prepared.receipt.new_asar_sha256,
-      applied_utc:new Date().toISOString(),boot_smoke:'Native Surface ready',
-      release_channel:'development-unsigned-source-delta'};
-    fs.writeFileSync(recFile+'.tmp',JSON.stringify(record,null,2)+'\n',{flag:'wx'});
-    fs.renameSync(recFile+'.tmp',recFile);
-    committed=true;
-    removeBackup(backup);
-    return 'INSTALLED';
-  }catch(error){
-    // Once a verified health receipt is durable, backup cleanup is no longer
-    // a rollback event. The next trusted --install can finish that cleanup.
-    if(committed)throw Error(error.message+'; healthy Desktop committed; cleanup pending: '+backup);
-    if(backedUp){
-      // Verify recovery bytes BEFORE touching a possibly still-usable shell.
-      assert(fs.existsSync(backup)&&
-        digest(fs.readFileSync(backup))===prepared.receipt.old_asar_sha256,
-        error.message+'; rollback backup missing or invalid; live preserved');
-      // Never overwrite a shell in use; retain backup for manual recovery.
-      if(list(exe).length){
-        throw Error(error.message+'; Desktop still running; backup retained: '+backup);
-      }
-      if(swapped)fs.rmSync(live,{force:true});
-      fs.renameSync(backup,live);
-      restart(exe,installation);
-    }
-    throw error;
-  }finally{
-    if(fs.existsSync(temporary))fs.rmSync(temporary,{force:true});
-  }
-}
+
 function validatedRecovery(loc,{readSource=officialSources,recover=recoverInterrupted}={}){
   // A dirty or untrusted source checkout must never repair installation bytes.
   // Reuse the verified Git blobs for delta preparation; avoid double fetches.
   const trusted=readSource(loc.repo);
   return {trusted,recovery:recover(loc)};
 }
-async function cli(){
-  const arg=process.argv[2];
-  assert(['--verify','--install'].includes(arg),
-    'Usage: node ci/dev-shell-delta.cjs --verify | --install (Dev only)');
-  const loc=locations({allowMissingLive:arg==='--install'});
-  let approvedSources;
-  if(arg==='--install'){
-    const gate=validatedRecovery(loc);
-    approvedSources=gate.trusted;
-    if(gate.recovery!=='CLEAN')console.log('DESKTOP_SHELL_INTERRUPTED='+gate.recovery);
+
+function inspectInstalledShell({repo,profile,live},approvedSources=officialSources(repo)){
+  const {revision,manifest,files}=approvedSources;
+  const prior=fs.readFileSync(live),archive=parseArchive(prior);
+  const installed=decodeJson(fileBytes(archive,'package.json').toString('utf8'));
+  assert(installed.name===manifest.name && installed.version===manifest.version,
+    'Installed Desktop identity/version differs from verified source; canonical NSIS required');
+  const recPath=path.join(profile,'desktop-shell-delta-receipt.json');
+  if(fs.existsSync(recPath)){
+    const receipt=decodeJson(fs.readFileSync(recPath,'utf8'));
+    assert(receipt.schema==='ordax.desktop-shell-delta-installed/1' &&
+      receipt.installed_asar_sha256===digest(prior),
+      'Installed Desktop ASAR disagrees with existing health receipt');
   }
-  const state=prepare(loc,approvedSources);
-  if(!state.changed){console.log('DESKTOP_SHELL_DELTA=CURRENT');return}
-  try{
-    console.log('STAGED='+state.candidate);
-    console.log('BYTES='+state.receipt.bytes);
-    console.log('SOURCE_SHA='+state.receipt.source_commit);
-    console.log('FILES='+state.receipt.changed_files.join(','));
-    if(arg==='--install')console.log('DESKTOP_SHELL_DELTA='+await install(loc,state));
-    else console.log('DESKTOP_SHELL_DELTA=VERIFIED_ONLY');
-  }finally{
-    // The staging area is temporary. Never preserve another executable copy.
-    fs.rmSync(state.dir,{recursive:true,force:true});
+  const changed=[];
+  for(const [name,expected] of Object.entries(files)){
+    if(!archive.header.files[name] || !fileBytes(archive,name).equals(expected))
+      changed.push(name);
   }
+  return Object.freeze({
+    source_commit:revision,
+    changed_files:Object.freeze(changed),
+    installer_required:changed.length>0,
+  });
 }
-if(require.main===module)cli().catch(err=>{console.error('DESKTOP_SHELL_DELTA_BLOCKED='+err.message);process.exitCode=1});
-module.exports={parseArchive,encodeArchive,fileBytes,integrity,buildDelta,digest,decodeJson,prepare,processList,install,stopFailedBoot,childAlive,recoverInterrupted,validatedRecovery};
+
+async function cli(){
+  const mode=process.argv[2];
+  // Do not attempt another direct ASAR swap: the Electron binary embeds the
+  // expected header hash. A candidate with changed CJS/MJS integrity hashes
+  // will be rejected before main.cjs can write a startup health receipt.
+  if(mode==='--install')throw Error(
+    'Standalone ASAR installation is incompatible with embedded Electron integrity; '+
+    'use the verified canonical Windows NSIS installer for shell changes');
+  assert(mode==='--verify'||mode==='--recover',
+    'Usage: node ci/dev-shell-delta.cjs --verify | --recover (Windows Dev)');
+  const loc=locations({allowMissingLive:mode==='--recover'});
+  // Source identity must be proven before any recovery changes installation bytes.
+  const gate=officialSources(loc.repo);
+  if(mode==='--recover')
+    console.log('DESKTOP_SHELL_RECOVERY='+recoverInterrupted(loc));
+  const inspected=inspectInstalledShell(loc,gate);
+  console.log('SOURCE_SHA='+inspected.source_commit);
+  console.log('FILES='+inspected.changed_files.join(','));
+  console.log('DESKTOP_SHELL_DELTA='+
+    (inspected.installer_required?'INSTALLER_REQUIRED':'CURRENT'));
+}
+if(require.main===module)cli().catch(error=>{
+  console.error('DESKTOP_SHELL_DELTA_BLOCKED='+error.message);
+  process.exitCode=1;
+});
+module.exports={
+  parseArchive,fileBytes,digest,decodeJson,inspectInstalledShell,
+  recoverInterrupted,validatedRecovery,officialSources,
+};

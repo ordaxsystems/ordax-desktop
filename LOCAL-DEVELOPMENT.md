@@ -32,83 +32,50 @@ O workflow do instalador usa os dois SHAs exatos e executa os testes Native
 e NSIS em runner descartável Windows. Desenvolvimento local, HMR e testes
 não substituem autorização de assinatura Stable nem comprovam upgrade NSIS.
 
-## Atualização Dev da shell sem instalador NSIS
+## Verificação da shell Dev e recuperação de transações antigas
 
-O host Electron pode receber somente o delta de arquivos `*.cjs`/`*.mjs`
-do commit exato da `ordax-desktop/main`, **sem baixar o NSIS de ~679 MB**:
+No Windows, o executável Electron 40 inclui um recurso de integridade com o
+SHA-256 do cabeçalho `resources/app.asar`. Alterar apenas CJS/MJS dentro
+desse arquivo muda seu hash e o executável rejeita a inicialização, mesmo
+quando os arquivos Git e os blocos ASAR possuem hashes individuais válidos.
+Por isso o antigo `--install` de delta isolado está **bloqueado**: para
+atualizar o próprio host Electron, usar o produtor NSIS canônico, com provas
+de integridade, instalação e rollback; não alterar o executável nem suas
+proteções para contornar o bloqueio.
+
+O diagnóstico permanece sem modificação da instalação e verifica a `main`
+oficial limpa, o commit remoto, os blobs Git, a identidade do pacote e os
+arquivos da shell instalados:
 
 ```powershell
 node ci/dev-shell-delta.cjs --verify
-# Feche normalmente o OrdaX OS Desktop Dev antes de instalar:
-node ci/dev-shell-delta.cjs --install
+# DESKTOP_SHELL_DELTA=CURRENT ou INSTALLER_REQUIRED
 ```
 
-O utilitário usa apenas Node.js e o Git existente, exige checkout limpo na
-`main` oficial, compara blobs Git, SHA-256 e integridade ASAR, e aborta com
-o Desktop aberto ou uma transação de atualização Native pendente. Troca apenas
-`resources/app.asar` da instalação Dev única e exige `Native Surface ready`
-após reiniciar; preserva o arquivo anterior para reversão em caso de falha.
-Não atualiza binário Electron, bibliotecas nativas, Surface/OS, modelos ou Stable;
-para alteração desses componentes, permanece necessário o produtor oficial.
+A atualização automática da **composição OS/Surface** continua no
+`ordax-pull` Native já existente e não exige reconstruir o NSIS quando
+a shell Electron não mudou. Testes somente de fonte seguem sem rebuild
+do instalador.
 
-Teste direcionado: `node --test ci/dev-shell-delta.test.cjs`.
-
-### Prova de troca e recuperação em uma cópia isolada
-
-O teste de transação usa a mesma função de instalação do modo Dev, mas
-substitui apenas o sinalizador de saúde por um resultado controlado e mantém
-os arquivos em um diretório temporário. Não abre outra instância do Desktop:
+Para recuperar um arquivo `.delta-rollback` deixado por uma execução
+anterior interrompida, e **somente com o Desktop fechado**, executar:
 
 ```powershell
-$env:ORDAX_DESKTOP_ISOLATED_ASAR = Join-Path $env:LOCALAPPDATA 'Programs\OrdaX OS Desktop Dev\resources\app.asar'
-node --test --test-name-pattern='physical Windows ASAR' ci/dev-shell-delta.test.cjs
-Remove-Item Env:\ORDAX_DESKTOP_ISOLATED_ASAR
+node ci/dev-shell-delta.cjs --recover
 ```
 
-Essa prova cobre substituição, hash, recibo, falha e rollback com os **bytes
-reais do ASAR**, sem modificar a instalação operacional. Quando o processo
-iniciado pelo utilitário não alcança `Native Surface ready`, somente a árvore
-desse PID é encerrada antes de restaurar o `app.asar` anterior. Se o processo
-não puder ser encerrado ou outro Desktop estiver em execução, a restauração
-falha fechada e preserva o rollback para recuperação segura.
-**Não** substitui o smoke com inicialização real de uma nova revisão ou
-a homologação do NSIS Stable.
-
-### Recuperação após uma interrupção do Windows
-
-O modo `--install` primeiro atesta a `main` oficial limpa, os blobs Git e a
-sincronia com `origin`; só depois verifica arquivos `.delta-rollback`,
-`.delta-ready` e recibos incompletos para preparar a próxima atualização.
-Com o Desktop fechado e
-sem transação Native pendente, restaura o último ASAR válido quando não existe
-recibo de saúde confirmado, ou conclui a limpeza quando o recibo válido atesta
-a nova shell. A recuperação valida a identidade canônica e a integridade do
-ASAR, inclusive após futuras mudanças de versão do pacote Dev, sem aceitar
-nomes de produto distintos. Um arquivo divergente ou suspeito bloqueia a
-operação e preserva a evidência. Depois que o recibo de saúde é confirmado,
-falhas na limpeza do backup **não** revertem a shell saudável; a próxima
-execução confiável com o Desktop fechado conclui essa limpeza. Se o backup
-estiver ausente ou corrompido durante uma falha de saúde, a shell atual não é
-apagada sem uma cópia íntegra verificada. `--verify` permanece somente leitura.
+A recuperação exige checkout Desktop canônico, sincronizado e limpo;
+valida o ASAR, o recibo anterior e a ausência de atualização Native
+pendente antes de tocar arquivos. Nunca inicia uma nova tentativa de delta.
+Se houver indícios divergentes ou processos ainda vivos, falha fechado.
+Teste direcionado: `node --test ci/dev-shell-delta.test.cjs`.
 
 ### NSIS substitui a shell Dev
 
-Quando o instalador NSIS oficial **conclui a extração** na instalação
-operacional única `%LOCALAPPDATA%\Programs\OrdaX OS Desktop Dev`, ele
-invalida somente o recibo de delta da shell anterior, pois o ASAR foi
-substituído pelo instalador. O hook existente `customInstall` verifica o
-destino canônico e o ASAR instalado; instalações isoladas de smoke não
-tocam o perfil real. Se houver `.delta-rollback`, `.delta-ready` ou recibo
-`.tmp`, o NSIS preserva os arquivos e a próxima atualização Dev continua
-fail-closed. Não apaga estado Native, enrollment, grants ou perfis.
-
-**Instalações NSIS antigas não recebem essa correção retroativamente.** Se
-um NSIS antigo substituiu o ASAR deixando um recibo de delta divergente,
-`--verify`/`--install` bloqueiam por integridade: não apagar nem editar o
-recibo manualmente, e não substituir módulos isolados. A reconciliação se
-dá somente por uma entrega NSIS canônica que contenha o hook corrigido e
-passe os gates físicos aplicáveis; o delta volta a operar sobre a nova
-base instalada.
+O hook oficial de instalação NSIS reconcilia recibos da antiga shell ao
+instalar uma composição verificada. Quando existirem transações incompletas,
+use primeiro a recuperação segura acima; não apague backups manualmente.
+Preservar estado Native, identidade, permissões e rollback.
 
 ### Recuperação do host Native após uma falha
 
