@@ -37,8 +37,26 @@ test('Desktop DEV Git sparse checkout includes the existing MCP candidate proof'
   assert.ok(sparseCall, 'Git sparse source manifest must remain explicit');
   assert.doesNotMatch(sparseCall[0], /'tools\/windows-desktop'/,
     'Windows compiler and Electron shell are not OS source inputs');
-  const evidence=JSON.parse(readFileSync(join(canonicalOs,
-    'docs/evidence/desktop-runtime-windows-candidate-2026-10-31.json'),'utf8'));
+  const evidencePath='docs/evidence/desktop-runtime-windows-candidate-2026-10-31.json';
+  const currentEvidence=join(canonicalOs,evidencePath);
+  let evidenceBytes;
+  if(existsSync(currentEvidence)){
+    evidenceBytes=readFileSync(currentEvidence,'utf8');
+  }else{
+    // The latest OS main may retire this historical candidate fixture.
+    // Recover only the exact OS revision recorded by Desktop import provenance;
+    // never copy the OS-owned evidence into this repository or skip its proof.
+    const imported=JSON.parse(readFileSync(join(__dirname,'docs/source-import.json'),'utf8'));
+    assert.equal(imported.source_repository,'ordaxsystems/ordax-os');
+    assert.match(imported.source_commit,/^[a-f0-9]{40}$/);
+    const result=spawnSync('git',['-C',canonicalOs,'show',
+      imported.source_commit+':'+evidencePath],{
+      encoding:'utf8',windowsHide:true,timeout:15000,maxBuffer:1024*1024,
+    });
+    assert.equal(result.status,0,result.stderr);
+    evidenceBytes=result.stdout;
+  }
+  const evidence=JSON.parse(evidenceBytes);
   assert.equal(evidence.$schema,'ordax.desktop-runtime-candidate-evidence/1');
   assert.equal(evidence.candidate.platform,'windows-amd64');
   assert.equal(evidence.candidate.signature_present,false);
