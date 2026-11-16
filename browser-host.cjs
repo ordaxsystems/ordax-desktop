@@ -212,6 +212,25 @@ function createDesktopBrowserHost({window, ipcMain, WebContentsView, session, di
   browserSession.setPermissionRequestHandler((_contents,_permission,callback)=>callback(false));
   browserSession.setPermissionCheckHandler?.(()=>false);
 
+  // Chromium may reject loadURL synchronously if its WebContents is no
+  // longer usable, in addition to rejecting the returned Promise. Neither
+  // failure may escape the Native IPC handler or strand an orphaned view.
+  const loadPage=(id,view,target,{closeOnThrow=false}={})=>{
+    try {
+      void Promise.resolve(view.webContents.loadURL(target)).catch(error=>{
+        if(disposed || tabs.get(id)!==view)return;
+        log('Browser navigation failed: '+error.message);
+        publish();
+      });
+    } catch(error) {
+      log('Browser navigation failed: '+error.message);
+      if(closeOnThrow)close(id);
+      else publish();
+      return false;
+    }
+    return true;
+  };
+
   const open = (id,url='',{background=false}={}) => {
     if (!TAB_ID.test(id) || tabs.has(id) || tabs.size>=MAX_TABS) return;
     const target=safeWebUrl(url,{blank:true});
@@ -265,8 +284,7 @@ function createDesktopBrowserHost({window, ipcMain, WebContentsView, session, di
     window.contentView.addChildView(view);
     if(!background || activeTabId===null)activeTabId=id;
     layout();
-    void wc.loadURL(target).catch(error=>{log('Browser navigation failed: '+error.message);publish();});
-    publish();
+    if(loadPage(id,view,target,{closeOnThrow:true}))publish();
   };
   const close = id => {
     const view=tabs.get(id);
@@ -290,7 +308,7 @@ function createDesktopBrowserHost({window, ipcMain, WebContentsView, session, di
     const view=tabs.get(id),target=safeWebUrl(url,{blank:true});
     if(!view||!target)return;
     invalidatePage(id,view.webContents);
-    void view.webContents.loadURL(target).catch(error=>{log('Browser navigation failed: '+error.message);publish();});
+    loadPage(id,view,target);
   };
   const handle = (event,raw) => {
     if (disposed || event.sender!==window.webContents ||

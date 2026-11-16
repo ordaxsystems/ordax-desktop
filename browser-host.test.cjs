@@ -88,6 +88,35 @@ test('Browser URL validation rejects privileged schemes, credentials and oversiz
   assert.equal(safeDownloadName('design-final.pdf'),'design-final.pdf');
 });
 
+test('synchronous Chromium navigation failure cannot orphan a tab or break later browsing',async t=>{
+  const f=fixture();t.after(()=>f.host.dispose());
+  const load=WC.prototype.loadURL;
+  WC.prototype.loadURL=function(url){
+    if(url.endsWith('/crash'))throw Error('Chromium rejected synchronous navigation');
+    return load.call(this,url);
+  };
+  t.after(()=>{WC.prototype.loadURL=load;});
+  f.post({type:'tab.open',tabId:'tab-good',url:'https://example.com/good'});
+  await Promise.resolve();
+  assert.doesNotThrow(()=>f.post({
+    type:'tab.open',tabId:'tab-failed',url:'https://example.com/crash',
+  }));
+  assert.deepEqual(f.host.getSnapshot().tabs.map(tab=>tab.id),['tab-good'],
+    'the failed tab must leave no registered Chromium view or active tab');
+  assert.equal(f.host.getSnapshot().activeTabId,'tab-good');
+  assert.equal(f.window.contentView.views.length,1);
+  assert.equal(View.all[1].webContents.closed,true,
+    'a failed tab must close its Chromium WebContents rather than leak it');
+  assert.doesNotThrow(()=>f.post({
+    type:'tab.navigate',tabId:'tab-good',url:'https://example.com/crash',
+  }));
+  assert.equal(f.host.getSnapshot().tabs[0].url,'https://example.com/good',
+    'failed navigation preserves the usable existing tab');
+  f.post({type:'tab.navigate',tabId:'tab-good',url:'https://example.com/recovered'});
+  await Promise.resolve();
+  assert.equal(f.host.getSnapshot().tabs[0].url,'https://example.com/recovered');
+});
+
 test('Native Internet session uses isolated Chromium views, actual tabs, and rejects unsafe navigation',async t=>{
   const f=fixture();t.after(()=>f.host.dispose());
   f.post({type:'snapshot.request'});
