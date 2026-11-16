@@ -444,6 +444,47 @@ test('untrusted page selection is only returned to OrdaX on explicit tab-scoped 
   assert.equal(event.selection.url,'https://example.com/');
 });
 
+test('synchronous Chromium selection failure returns an unavailable receipt without breaking IPC',async t=>{
+  const f=fixture();t.after(()=>f.host.dispose());
+  f.post({type:'tab.open',tabId:'tab-failed-selection',url:'https://example.com'});
+  await Promise.resolve();
+  const wc=View.all[0].webContents;
+  wc.executeJavaScript=()=>{throw Error('Chromium WebContents is no longer usable');};
+  assert.doesNotThrow(()=>f.post({
+    type:'page-selection.capture',tabId:'tab-failed-selection',requestId:'failed-selection',
+  }));
+  const failed=f.ui.sent.map(x=>x.value).find(x=>x.requestId==='failed-selection');
+  assert.equal(failed?.error,'selection-unavailable',
+    'the current page must receive the same failure receipt as an async rejection');
+  wc.executeJavaScript=async()=> 'recovered selection';
+  f.post({type:'page-selection.capture',tabId:'tab-failed-selection',requestId:'recovered'});
+  await new Promise(resolve=>setImmediate(resolve));
+  const recovered=f.ui.sent.map(x=>x.value).find(x=>x.requestId==='recovered');
+  assert.equal(recovered?.selection?.text,'recovered selection',
+    'a synchronous Chromium failure must not disable subsequent page operations');
+});
+
+test('synchronous Chromium find finish failure clears listeners without crashing Native IPC',async t=>{
+  const f=fixture();t.after(()=>f.host.dispose());
+  f.post({type:'tab.open',tabId:'tab-find-failure',url:'https://example.com'});
+  await Promise.resolve();
+  const wc=View.all[0].webContents;
+  let request=10;
+  wc.findInPage=()=>++request;
+  f.post({type:'page-find.search',tabId:'tab-find-failure',query:'first'});
+  assert.equal(wc.listenerCount('found-in-page'),1);
+  wc.stopFindInPage=()=>{throw Error('Chromium find controller is unavailable');};
+  assert.doesNotThrow(()=>f.post({type:'page-find.finish',tabId:'tab-find-failure'}));
+  assert.equal(wc.listenerCount('found-in-page'),0,
+    'even if Chromium fails, Native no longer holds the stale listener');
+  f.post({type:'page-find.search',tabId:'tab-find-failure',query:'new'});
+  assert.equal(wc.listenerCount('found-in-page'),1,
+    'a new page search still works after the failed finish');
+  wc.emit('found-in-page',{}, {requestId:request,matches:2});
+  assert.ok(f.ui.sent.some(x=>x.value.type==='page-find.result'&&x.value.count===2));
+  assert.equal(wc.listenerCount('found-in-page'),0);
+});
+
 test('late page selection from a previous navigation cannot be attributed to the new document',async t=>{
   const f=fixture();t.after(()=>f.host.dispose());
   f.post({type:'tab.open',tabId:'tab-selection',url:'https://old.example/'});
