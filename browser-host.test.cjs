@@ -88,6 +88,54 @@ test('Browser URL validation rejects privileged schemes, credentials and oversiz
   assert.equal(safeDownloadName('design-final.pdf'),'design-final.pdf');
 });
 
+test('failed Chromium view attachment never orphans a tab and later opens recover',async t=>{
+  for(const partiallyAttached of [false,true]){
+    const f=fixture();t.after(()=>f.host.dispose());
+    f.post({type:'tab.open',tabId:'existing',url:'https://example.com/existing'});
+    await Promise.resolve();
+    const before=f.host.getSnapshot();
+    const add=f.window.contentView.addChildView;
+    f.window.contentView.addChildView=function(view){
+      if(partiallyAttached)this.views.push(view);
+      throw Error('Windows Chromium view could not attach');
+    };
+    assert.doesNotThrow(()=>f.post({
+      type:'tab.open',tabId:'failed',url:'https://example.com/failed',
+    }), 'a failed native view attachment must not escape into Native IPC');
+    assert.deepEqual(f.host.getSnapshot(),before,
+      'a failed tab must not change the active tab or registered tabs');
+    assert.deepEqual(f.window.contentView.views,[View.all[0]],
+      'a partially attached Chromium view must be removed');
+    assert.equal(View.all[1].webContents.closed,true,
+      'the failed WebContents must be closed, not leaked');
+    assert.equal(f.host.hasActiveWork(),false,
+      'an aborted tab creation cannot hold the updater gate');
+    f.window.contentView.addChildView=add;
+    f.post({type:'tab.open',tabId:'recovered',url:'https://example.com/recovered'});
+    await Promise.resolve();
+    assert.deepEqual(f.host.getSnapshot().tabs.map(tab=>tab.id),['existing','recovered']);
+    assert.equal(f.window.contentView.views.length,2,
+      'a subsequent valid tab still attaches to the canonical container');
+  }
+});
+
+test('failed Chromium window-open hook closes its unregistered WebContents',async t=>{
+  const f=fixture();t.after(()=>f.host.dispose());
+  const hook=WC.prototype.setWindowOpenHandler;
+  WC.prototype.setWindowOpenHandler=()=>{throw Error('Chromium popup policy unavailable');};
+  t.after(()=>{WC.prototype.setWindowOpenHandler=hook;});
+  assert.doesNotThrow(()=>f.post({
+    type:'tab.open',tabId:'failed-hook',url:'https://example.com',
+  }));
+  assert.deepEqual(f.host.getSnapshot().tabs,[]);
+  assert.equal(f.window.contentView.views.length,0);
+  assert.equal(View.all[0].webContents.closed,true);
+  WC.prototype.setWindowOpenHandler=hook;
+  f.post({type:'tab.open',tabId:'working',url:'https://example.com'});
+  await Promise.resolve();
+  assert.equal(f.host.getSnapshot().tabs.length,1);
+});
+
 test('synchronous Chromium navigation failure cannot orphan a tab or break later browsing',async t=>{
   const f=fixture();t.after(()=>f.host.dispose());
   const load=WC.prototype.loadURL;
