@@ -138,12 +138,19 @@ function createDesktopBrowserHost({window, ipcMain, WebContentsView, session, di
     return false;
   };
   const publish = () => send({type:'snapshot',snapshot:snapshot()});
+  // Avoid crossing the Electron/Chromium native boundary on repeated Surface
+  // viewport messages and Windows/RDP resize events that change no layout.
+  // Cache only the last layout actually applied to each exact WebContentsView.
+  const appliedLayouts = new WeakMap();
   const layout = () => {
     for(const [id,view] of tabs){
-      const visible= id===activeTabId && viewport!==null;
-      if(visible)view.setBounds(viewport);
-      else view.setBounds({x:0,y:0,width:0,height:0});
-      view.setVisible?.(visible);
+      const visible=id===activeTabId && viewport!==null;
+      const bounds=visible?viewport:{x:0,y:0,width:0,height:0};
+      const previous=appliedLayouts.get(view);
+      if(!previous || ['x','y','width','height'].some(key=>
+          previous.bounds[key]!==bounds[key]))view.setBounds(bounds);
+      if(!previous || previous.visible!==visible)view.setVisible?.(visible);
+      appliedLayouts.set(view,{bounds,visible});
     }
   };
   const downloadEvent=(id,fileName,status)=>send({type:'browser-download',id,fileName,status});

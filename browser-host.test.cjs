@@ -22,9 +22,9 @@ class WC extends EventEmitter {
   stopFindInPage(){}
 }
 class View {
-  constructor(options){this.options=options;this.webContents=new WC();View.all.push(this);}
-  setBounds(value){this.bounds=value;}
-  setVisible(value){this.visible=value;}
+  constructor(options){this.options=options;this.webContents=new WC();this.boundsCalls=0;this.visibleCalls=0;View.all.push(this);}
+  setBounds(value){this.bounds=value;this.boundsCalls++;}
+  setVisible(value){this.visible=value;this.visibleCalls++;}
 }
 View.all=[];
 function fixture(){
@@ -457,6 +457,49 @@ test('browser viewport restores its requested size after a temporary Windows or 
     'invalid viewport coordinates cannot be restored after resize');
 });
  
+test('Chromium layout does not repeat native calls for unchanged RDP size or tab visibility',async t=>{
+  const f=fixture();t.after(()=>f.host.dispose());
+  for(let i=0;i<16;i++)f.post({type:'tab.open',tabId:'tab-'+i,url:'about:blank'});
+  await Promise.resolve();
+  const request={visible:true,x:24,y:50,width:800,height:450};
+  f.post({type:'viewport.set',viewport:request});
+  const calls=()=>View.all.reduce((total,v)=>total+v.boundsCalls+v.visibleCalls,0);
+  const first=calls();
+  for(let i=0;i<40;i++){
+    f.window.emit('resize');
+    f.post({type:'viewport.set',viewport:request});
+  }
+  assert.equal(calls(),first,
+    'unchanged layout must not issue 2560 unnecessary Chromium native calls');
+  const active=View.all[15],next=View.all[2];
+  f.post({type:'tab.activate',tabId:'tab-15'});
+  assert.equal(calls(),first,'reselecting active tab is a layout no-op');
+  f.window.getContentBounds=()=>({width:480,height:350});
+  f.window.emit('resize');
+  assert.deepEqual(active.bounds,{x:24,y:50,width:456,height:300});
+  assert.equal(calls(),first+1,'RDP clamp changes only active bounds');
+  f.window.emit('resize');
+  assert.equal(calls(),first+1,'repeat RDP resize cannot change Chromium layout');
+  f.window.getContentBounds=()=>({width:1000,height:700});
+  f.window.emit('resize');
+  assert.equal(calls(),first+2,'restoring screen changes only active bounds');
+  f.post({type:'tab.activate',tabId:'tab-2'});
+  assert.deepEqual(active.bounds,{x:0,y:0,width:0,height:0});
+  assert.equal(active.visible,false);
+  assert.deepEqual(next.bounds,{x:24,y:50,width:800,height:450});
+  assert.equal(next.visible,true);
+  assert.equal(calls(),first+6,'activation changes only previous and next tabs');
+  f.post({type:'viewport.set',viewport:{visible:false,x:24,y:50,width:800,height:450}});
+  assert.equal(next.visible,false);
+  assert.equal(calls(),first+8,'hiding the active tab clears bounds and visibility');
+  f.post({type:'viewport.set',viewport:request});
+  assert.equal(next.visible,true);
+  assert.equal(calls(),first+10,'restoring the tab reapplies real bounds and visibility');
+  f.post({type:'tab.close',tabId:'tab-2'});
+  assert.equal(f.host.getSnapshot().tabs.length,15);
+  assert.equal(View.all[15].visible,true,'closing active tab exposes the last remaining tab');
+});
+
 test('closing a tab releases only its unapproved downloads, even with an open save dialog',async()=>{
   for(const phase of ['pending','approving']){
     const f=fixture();
