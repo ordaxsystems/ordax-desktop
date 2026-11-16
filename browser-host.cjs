@@ -89,13 +89,28 @@ function createDesktopBrowserHost({window, ipcMain, WebContentsView, session, di
   // rollback. Only the current Native origin may control Internet tabs or
   // receive their snapshots; sender WebContents identity alone is not enough.
   let trustedOrigin = null;
+  let originEpoch = 0;
   const setTrustedOrigin = base => {
-    if(base===null){trustedOrigin=null;return;}
-    const url=new URL(base);
-    if(url.protocol!=='http:'||url.hostname!=='127.0.0.1'||!url.port||
-       url.username||url.password||url.pathname!=='/'||url.search||url.hash)
-      throw new TypeError('Native browser commands require a loopback host origin');
-    trustedOrigin=url.origin;
+    let next=null;
+    if(base!==null){
+      const url=new URL(base);
+      if(url.protocol!=='http:'||url.hostname!=='127.0.0.1'||!url.port||
+         url.username||url.password||url.pathname!=='/'||url.search||url.hash)
+        throw new TypeError('Native browser commands require a loopback host origin');
+      next=url.origin;
+    }
+    if(next===trustedOrigin)return;
+    // Rollback and Native host replacement revoke the previous session,
+    // including its tabs and unconsumed save consent. An old transfer whose
+    // cancellation fails must still hold the updater gate until Chromium ends.
+    trustedOrigin=null;
+    originEpoch++;
+    for(const id of [...tabs.keys()])close(id);
+    for(const [id,record] of downloads)
+      if(record.phase==='downloading')cancelDownload(id,record);
+    requestedViewport=null;
+    viewport=null;
+    trustedOrigin=next;
   };
   const isTrustedMainDocument = () => {
     if(disposed||!trustedOrigin||window.isDestroyed()||
@@ -153,7 +168,9 @@ function createDesktopBrowserHost({window, ipcMain, WebContentsView, session, di
       appliedLayouts.set(view,{bounds,visible});
     }
   };
-  const downloadEvent=(id,fileName,status)=>send({type:'browser-download',id,fileName,status});
+  const downloadEvent=(id,fileName,status,epoch)=>{
+    if(epoch===originEpoch)send({type:'browser-download',id,fileName,status});
+  };
   // Release the update gate synchronously when consent is revoked. Electron's
   // 'done' event may arrive later (or never after its WebContents closes).
   const cancelDownload=(id,record)=>{
@@ -175,7 +192,7 @@ function createDesktopBrowserHost({window, ipcMain, WebContentsView, session, di
     if(downloads.get(id)===record){
       record.phase='cancelled';
       downloads.delete(id);
-      downloadEvent(id,record.fileName,'cancelled');
+      downloadEvent(id,record.fileName,'cancelled',record.epoch);
     }
     return true;
   };
@@ -186,7 +203,7 @@ function createDesktopBrowserHost({window, ipcMain, WebContentsView, session, di
     if (downloads.size >= 8) {event.preventDefault();return;}
     const id='download-'+randomBytes(8).toString('hex');
     const fileName=safeDownloadName(item.getFilename());
-    const record={item,contents,fileName,phase:'pending'};
+    const record={item,contents,fileName,phase:'pending',epoch:originEpoch};
     downloads.set(id,record);
     // Register the terminal listener BEFORE requesting pause: Chromium can
     // finish or cancel a tiny transfer synchronously while pausing.
@@ -195,9 +212,9 @@ function createDesktopBrowserHost({window, ipcMain, WebContentsView, session, di
       if(downloads.get(id)!==record)return;
       record.phase='done';
       downloads.delete(id);
-      downloadEvent(id,fileName,state==='completed'?'saved':state==='cancelled'?'cancelled':'failed');
+      downloadEvent(id,fileName,state==='completed'?'saved':state==='cancelled'?'cancelled':'failed',record.epoch);
     });
-    downloadEvent(id,fileName,'pending');
+    downloadEvent(id,fileName,'pending',record.epoch);
     try { item.pause(); }
     catch(error) {
       // A failed pause must not leave an unapproved transfer running. Keep
@@ -431,7 +448,7 @@ function createDesktopBrowserHost({window, ipcMain, WebContentsView, session, di
           // resume() may synchronously emit 'done' as well. The terminal
           // receipt must stay last, and the idle/update gate already released.
           if(downloads.get(command.id)===record && record.phase==='downloading')
-            downloadEvent(command.id,record.fileName,'downloading');
+            downloadEvent(command.id,record.fileName,'downloading',record.epoch);
         } catch(error) {
           cancelDownload(command.id,record);
           log('Browser download could not be saved: '+error.message);

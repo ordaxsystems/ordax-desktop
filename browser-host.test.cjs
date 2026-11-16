@@ -205,16 +205,79 @@ test('Internet bridge requires current Native origin and main frame across rollb
   f.host.setTrustedOrigin(null);
   f.ui.url='http://127.0.0.1:43123/system/composition/native/index.html';
   post({type:'tab.open',tabId:'revoked',url:'https://example.com/'});
-  assert.equal(f.host.getSnapshot().tabs.length,1,'rollback immediately revokes old port');
+  assert.equal(f.host.getSnapshot().tabs.length,0,'rollback closes tabs from revoked Native session');
+  assert.equal(View.all[0].webContents.closed,true,'revoked Native session must close old Chromium WebContents');
   f.host.setTrustedOrigin('http://127.0.0.1:43210');
   post({type:'tab.open',tabId:'stale',url:'https://example.com/'});
-  assert.equal(f.host.getSnapshot().tabs.length,1,'old Native port stays rejected');
+  assert.equal(f.host.getSnapshot().tabs.length,0,'old Native port stays rejected');
   f.ui.url='http://127.0.0.1:43210/system/composition/native/index.html?source=test';
   post({type:'tab.open',tabId:'rebound',url:'https://example.com/'});
-  assert.equal(f.host.getSnapshot().tabs.length,2,'new Native port regains browser ownership');
+  assert.equal(f.host.getSnapshot().tabs.length,1,'new Native port gets a fresh browser session');
+  f.host.setTrustedOrigin('http://127.0.0.1:43210');
+  assert.equal(f.host.getSnapshot().tabs.length,1,'reaffirming the same origin preserves its tabs');
   assert.throws(()=>f.host.setTrustedOrigin('https://attacker.example'),/loopback host origin/);
   assert.throws(()=>f.host.setTrustedOrigin('http://127.0.0.1:43210/evil'),/loopback host origin/);
   assert.throws(()=>f.host.setTrustedOrigin('http://user:pass@127.0.0.1:43210/'),/loopback host origin/);
+});
+
+test('Native rollback revokes pending save consent and prevents stale dialogs from writing files',async t=>{
+  const f=fixture();t.after(()=>f.host.dispose());
+  f.post({type:'tab.open',tabId:'tab-old',url:'https://example.com'});
+  await Promise.resolve();
+  const item=new EventEmitter();
+  let cancels=0, saved=0, resumed=0, resolveDialog;
+  item.getFilename=()=> 'private.txt';
+  item.pause=()=>{};
+  item.cancel=()=>{cancels++;};
+  item.setSavePath=()=>{saved++;};
+  item.resume=()=>{resumed++;};
+  f.browserSession.emit('will-download',{preventDefault(){throw Error('unexpected reject');}},
+    item,View.all[0].webContents);
+  const pending=f.ui.sent.map(x=>x.value).find(x=>x.type==='browser-download'&&x.status==='pending');
+  f.dialog.showSaveDialog=()=>new Promise(resolve=>{resolveDialog=resolve;});
+  f.post({type:'download.approve',id:pending.id});
+  f.host.setTrustedOrigin(null);
+  assert.equal(cancels,1,'revoking Native ownership cancels the outstanding consent');
+  assert.equal(f.host.getSnapshot().tabs.length,0);
+  resolveDialog({canceled:false,filePath:'C:\\Users\\Dev\\private.txt'});
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(saved,0,'late approval from the old Native origin cannot write a file');
+  assert.equal(resumed,0,'late approval from the old Native origin cannot resume a transfer');
+});
+
+test('Native rollback keeps failed transfer cancellation gated without leaking to the replacement session',async t=>{
+  const f=fixture();t.after(()=>f.host.dispose());
+  f.post({type:'tab.open',tabId:'tab-old',url:'https://example.com'});
+  await Promise.resolve();
+  const item=new EventEmitter();
+  let cancelled=0;
+  item.getFilename=()=> 'confidential.txt';
+  item.pause=()=>{};
+  item.setSavePath=()=>{};
+  item.resume=()=>{};
+  item.cancel=()=>{cancelled++;throw Error('Chromium cannot cancel running transfer');};
+  f.browserSession.emit('will-download',{preventDefault(){throw Error('unexpected reject');}},
+    item,View.all[0].webContents);
+  const pending=f.ui.sent.map(x=>x.value).find(x=>x.type==='browser-download'&&x.status==='pending');
+  f.dialog.showSaveDialog=async()=>({canceled:false,filePath:'C:\\Users\\Dev\\confidential.txt'});
+  f.post({type:'download.approve',id:pending.id});
+  await new Promise(resolve=>setImmediate(resolve));
+  f.host.setTrustedOrigin(null);
+  assert.equal(cancelled,1);
+  assert.equal(f.host.getSnapshot().tabs.length,0);
+  assert.equal(f.host.hasActiveWork(),true,
+    'failed Chromium cancel must not allow an unsafe Desktop update');
+  f.host.setTrustedOrigin('http://127.0.0.1:43210');
+  f.ui.url='http://127.0.0.1:43210/system/composition/native/index.html';
+  f.post({type:'tab.open',tabId:'tab-new',url:'https://openai.com'});
+  await Promise.resolve();
+  assert.deepEqual(f.host.getSnapshot().tabs.map(tab=>tab.id),['tab-new']);
+  f.ui.sent.length=0;
+  item.emit('done',{},'completed');
+  assert.equal(f.host.hasActiveWork(),false,
+    'a real terminal Chromium event releases the update gate');
+  assert.equal(f.ui.sent.some(x=>x.value.type==='browser-download'),false,
+    'a completion event from the revoked origin cannot leak its filename to new Native');
 });
 
 test('download IPC rejects oversized and foreign-window requests before save dialog',async t=>{
