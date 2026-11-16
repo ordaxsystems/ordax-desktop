@@ -52,29 +52,37 @@ jobs:
               $env:HEAD_SHA -cmatch '^[a-f0-9]{40}$') {
             $changed = @(& git diff --name-only --no-renames $env:BASE_SHA $env:HEAD_SHA)
             if ($LASTEXITCODE -eq 0 -and $changed.Count -gt 0) {
-              # Markdown is excluded from the explicit build.files allowlist in package.json;
-              # a documentation update alongside Dev-only code must not trigger NSIS.
-              $nonTest = @($changed | Where-Object {
-                $_ -cnotmatch '\.md$' -and
-                $_ -cnotmatch '^(standalone-stage|local-dev|window-layout|dev-update|host-recovery|host-startup|native-grant-frame|runtime)\.test\.cjs$' -and
-                $_ -cnotmatch '^ci/dev-shell-delta(?:\.test)?\.cjs$'
-              })
-              # Changes confined to the source gate cannot change installer bytes.
-              # Compare the exact reusable installer job against the base commit;
-              # any change there (or unreadable base) still requires NSIS.
-              if ($nonTest.Count -eq 1 -and $nonTest[0] -ceq '.github/workflows/desktop-source.yml') {
-                $baseline = @(& git show "${env:BASE_SHA}:.github/workflows/desktop-source.yml" 2>$null)
-                if ($LASTEXITCODE -eq 0 -and $baseline.Count -gt 0) {
-                  $block = '(?ms)^  windows-installer:\s*\r?\n.*\z'
-                  $oldJob = [regex]::Match(($baseline -join "`n"), $block)
-                  $newJob = [regex]::Match((Get-Content .github/workflows/desktop-source.yml -Raw), $block)
-                  if ($oldJob.Success -and $newJob.Success -and
-                      $oldJob.Value.Replace("`r`n", "`n").TrimEnd() -ceq $newJob.Value.Replace("`r`n", "`n").TrimEnd()) {
-                    $nonTest = @()
+              # The explicit package manifest is the sole authority for what
+              # enters Electron. A new root test must not require a full NSIS
+              # build merely because it was omitted from a hardcoded name list.
+              $packaged = @((Get-Content package.json -Raw | ConvertFrom-Json).build.files)
+              $exactFiles = $packaged.Count -gt 0 -and
+                @($packaged | Where-Object { $_ -cmatch '[*?\[\]{}!]' }).Count -eq 0
+              if ($exactFiles) {
+                $nonTest = @($changed | Where-Object {
+                  $file = $_
+                  $notPackaged = $packaged -cnotcontains $file
+                  -not ($notPackaged -and (
+                    $file -cmatch '\.md$' -or
+                    $file -cmatch '^[a-z0-9-]+\.test\.cjs$' -or
+                    $file -cmatch '^ci/(?:dev-shell-delta(?:\.test)?|resolve-test-os)\.cjs$'))
+                })
+                # A source-gate-only edit cannot change installer bytes when
+                # the entire reusable Windows installer job is unchanged.
+                if ($nonTest.Count -eq 1 -and $nonTest[0] -ceq '.github/workflows/desktop-source.yml') {
+                  $baseline = @(& git show "${env:BASE_SHA}:.github/workflows/desktop-source.yml" 2>$null)
+                  if ($LASTEXITCODE -eq 0 -and $baseline.Count -gt 0) {
+                    $block = '(?ms)^  windows-installer:\s*\r?\n.*\z'
+                    $oldJob = [regex]::Match(($baseline -join "`n"), $block)
+                    $newJob = [regex]::Match((Get-Content .github/workflows/desktop-source.yml -Raw), $block)
+                    if ($oldJob.Success -and $newJob.Success -and
+                        $oldJob.Value.Replace("`r`n", "`n").TrimEnd() -ceq $newJob.Value.Replace("`r`n", "`n").TrimEnd()) {
+                      $nonTest = @()
+                    }
                   }
                 }
+                $required = $nonTest.Count -gt 0
               }
-              $required = $nonTest.Count -gt 0
             }
           }
           # The exact alpha.21 bytes already passed this NSIS and isolated
