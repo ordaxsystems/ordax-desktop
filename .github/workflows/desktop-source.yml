@@ -132,12 +132,21 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Desktop import or OS owner boundary failed' }
       - name: Verify isolated Windows Electron source syntax and tests
         shell: pwsh
+        env:
+          # Tests import the OS-owned distribution contract; the verified
+          # sparse checkout above is the only CI authority for that contract.
+          ORDAX_DESKTOP_OS_CHECKOUT: ${{ github.workspace }}\.deps\ordax-os
         run: |
           $ErrorActionPreference = 'Stop'
-          foreach ($source in @(Get-ChildItem -Path . -File -Recurse -Include *.cjs,*.mjs |
-              Where-Object { $_.FullName -notmatch '[\\/]\.deps[\\/]' })) {
-            & node --check $source.FullName
-            if ($LASTEXITCODE -ne 0) { throw "Desktop JS parse failed: $($source.Name)" }
+          # Check only versioned Desktop sources, not the OS checkout,
+          # caches, generated outputs, or installed node_modules.
+          $sources = @(& git ls-files -- '*.cjs' '*.mjs')
+          if ($LASTEXITCODE -ne 0 -or $sources.Count -eq 0) {
+            throw 'Cannot enumerate versioned Desktop JS sources'
+          }
+          foreach ($source in $sources) {
+            & node --check (Join-Path $PWD.Path $source)
+            if ($LASTEXITCODE -ne 0) { throw "Desktop JS parse failed: $source" }
           }
           & npm test
           if ($LASTEXITCODE -ne 0) { throw 'Detached Windows source regression failed' }

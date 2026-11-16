@@ -172,14 +172,17 @@ test('development launcher explicitly uses the canonical Native MCP supervisor w
 });
 
 test('importing local development preparation does not select another Desktop profile',()=>{
-  const script=[
-    "delete process.env.ORDAX_DESKTOP_LOCAL_DEV;",
-    "require("+JSON.stringify(entry)+");",
-    "process.stdout.write(process.env.ORDAX_DESKTOP_LOCAL_DEV||'unset');",
-  ].join('');
-  const r=spawnSync(process.execPath,['-e',script],{
-    encoding:'utf8',env:{...process.env,ORDAX_DESKTOP_LOCAL_DEV:undefined},
-  });
-  assert.equal(r.status,0,r.stderr);
-  assert.equal(r.stdout,'unset');
+  const f=makeDetachedFixture();
+  try {
+    const script=[
+      "delete process.env.ORDAX_DESKTOP_LOCAL_DEV;",
+      "require("+JSON.stringify(entry)+");",
+      "process.stdout.write(process.env.ORDAX_DESKTOP_LOCAL_DEV||'unset');",
+    ].join('');
+    const r=spawnSync(process.execPath,['-e',script],{
+      encoding:'utf8',env:{...f.environment,ORDAX_DESKTOP_LOCAL_DEV:undefined},
+    });
+    assert.equal(r.status,0,r.stderr);
+    assert.equal(r.stdout,'unset');
+  } finally { f.cleanup(); }
 });
