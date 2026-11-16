@@ -16,6 +16,7 @@ const { verifyBundledNativeReceipt } = require('./native-build.cjs');
 const { isTrustedNativeRequest,isNativeStateRoute } = require('./native-grant-frame.cjs');
 let window=null, runtime=null, stream=null, browserHost=null, initialUpdateTimer=null, updateTimer=null, activationTimer=null, staging=false, idleActivation=null;
 let quitting=false,disarmNativeHostExit=null;
+const nativeBootAbort=new AbortController();
 // A normal close, a health recovery, and an update relaunch are distinct events.
 // Never infer a crash solely from the absence of a running Electron process.
 let shutdownReason='unclassified';
@@ -574,6 +575,7 @@ app.on('before-quit',()=>{
   if(shutdownReason==='unclassified') shutdownReason='application-quit';
   log('Desktop shutdown requested: '+shutdownReason);
   quitting=true;
+  nativeBootAbort.abort(); // Stop the Native child even before startHost assigns runtime.
   disarmNativeHostExit?.();
   disarmNativeHostExit=null;
   if(initialUpdateTimer){clearTimeout(initialUpdateTimer);initialUpdateTimer=null;}
@@ -739,7 +741,8 @@ app.whenReady().then(async()=>{
     try {
       log(root===template?'Bundled OrdaX Surface':'Verified Git-managed OrdaX Surface');
       runtime=await startHost({root,template,stateDirectory:runtimeStateDirectory(userData),userData,log,fileToken,localSessionToken,nativeSessionToken,diagnosticToken,deviceProfileToken,stateToken,networkToken,observationToken,surfaceReportToken,displayToken,localAiToken,sourceSha:sourceOf(selected),
-         builtAssetsRoot:nativeBuiltAssetsFor(root,template)});
+         builtAssetsRoot:nativeBuiltAssetsFor(root,template),signal:nativeBootAbort.signal});
+      if(nativeBootAbort.signal.aborted)throw Error('Desktop Native startup cancelled by shutdown');
       bindNativeOrigin(runtime.url);
       authorizeDesktopFileRequests(window,runtime.url,fileToken,localSessionToken,nativeSessionToken,deviceProfileToken,stateToken,observationToken,localAiToken,surfaceReportToken);
       await window.loadURL(nativeUrl(runtime.url,sourceOf(selected)));
@@ -749,12 +752,15 @@ app.whenReady().then(async()=>{
       await assertDesktopLocalAiSmoke(window);
       log('Native shell mounted and ready: '+runtime.url);
       log('Native Surface ready: '+runtime.url);
+      if(nativeBootAbort.signal.aborted)throw Error('Desktop Native startup cancelled by shutdown');
       if(selected.trial) {
         confirmHealthy(userData,selected.sha);
         log('Desktop Dev candidate committed healthy: '+selected.sha);
       }
     } catch(error) {
-      if(!selected.trial)throw error;
+      // Closing Electron is not a failed candidate health check. Retain its
+      // verified pending trial instead of writing a false rejection receipt.
+      if(nativeBootAbort.signal.aborted || !selected.trial)throw error;
       log('Desktop Dev candidate health failed; reverting to known-good: '+error.message);
       bindNativeOrigin(null);
       rejectCandidate(userData,selected.sha);
@@ -763,7 +769,8 @@ app.whenReady().then(async()=>{
       const fallback=await chooseBootVersion({userData,template,log});
       root=fallback.root;
       runtime=await startHost({root,template,stateDirectory:runtimeStateDirectory(userData),userData,log,fileToken,localSessionToken,nativeSessionToken,diagnosticToken,deviceProfileToken,stateToken,networkToken,observationToken,surfaceReportToken,displayToken,localAiToken,sourceSha:sourceOf(fallback),
-         builtAssetsRoot:nativeBuiltAssetsFor(root,template)});
+         builtAssetsRoot:nativeBuiltAssetsFor(root,template),signal:nativeBootAbort.signal});
+       if(nativeBootAbort.signal.aborted)throw Error('Desktop Native startup cancelled by shutdown');
       bindNativeOrigin(runtime.url);
       authorizeDesktopFileRequests(window,runtime.url,fileToken,localSessionToken,nativeSessionToken,deviceProfileToken,stateToken,observationToken,localAiToken,surfaceReportToken);
       await window.loadURL(nativeUrl(runtime.url,sourceOf(fallback)));
@@ -774,6 +781,7 @@ app.whenReady().then(async()=>{
       log('Native shell mounted and ready after rollback: '+runtime.url);
       log('Native Surface ready after rollback: '+runtime.url);
     }
+    if(nativeBootAbort.signal.aborted)throw Error('Desktop Native startup cancelled by shutdown');
     monitorNativeHost(runtime.child);
     // Migrate the earlier two-version Dev journal only after an exact,
     // already-verified active Native boot is healthy. An in-flight candidate
@@ -834,6 +842,7 @@ app.whenReady().then(async()=>{
     });
     browserHost=null;
     disarmNativeHostExit=null;
+    if(nativeBootAbort.signal.aborted)return; // The splash window has already closed.
     log('Startup failed: '+error.message);
     status('Falha ao iniciar: '+error.message+'. Verifique os logs no menu OrdaX.');
   }

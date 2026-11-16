@@ -15,7 +15,8 @@ function freePort() {
     });
   });
 }
-function isReady(port, nativeGrant=null) {
+function isReady(port, nativeGrant=null,signal=null) {
+  if(signal?.aborted)return Promise.resolve(false);
   const attested=nativeGrant!==null;
   if(attested && (typeof nativeGrant!=='string'||!/^[0-9a-f]{64}$/.test(nativeGrant)))
     return Promise.resolve(false);
@@ -26,7 +27,7 @@ function isReady(port, nativeGrant=null) {
     const request=http.get({
       hostname:'127.0.0.1',port,
       path:attested?'/__ordax/desktop-host-ready':'/system/composition/native/index.html',
-      timeout:8000,
+      timeout:8000,signal,
       headers:attested?{'X-Ordax-Desktop-Ready-Challenge':challenge}:{},
     },r=>{
       r.resume();
@@ -48,7 +49,7 @@ function hasHostExited(child) {
   return child.exitCode!==null || child.signalCode!==null;
 }
 async function startHost({root,template=root,stateDirectory,userData,log,builtAssetsRoot=null,
-  fileToken,localSessionToken,nativeSessionToken,diagnosticToken,deviceProfileToken,stateToken,networkToken,observationToken,surfaceReportToken,displayToken,localAiToken,sourceSha=""}) {
+  fileToken,localSessionToken,nativeSessionToken,diagnosticToken,deviceProfileToken,stateToken,networkToken,observationToken,surfaceReportToken,displayToken,localAiToken,sourceSha="",signal=null}) {
   if(typeof fileToken!=="string" || !/^[0-9a-f]{64}$/.test(fileToken))
     throw TypeError("OrdaX Desktop Files require per-launch authorization");
   if(typeof localSessionToken!=="string" || !/^[0-9a-f]{64}$/.test(localSessionToken) ||
@@ -67,7 +68,9 @@ async function startHost({root,template=root,stateDirectory,userData,log,builtAs
     throw TypeError("Desktop Native sessions require independent per-launch tokens");
   if(sourceSha!=="" && !/^[0-9a-f]{40}$/.test(sourceSha))
     throw TypeError("Desktop diagnostic source SHA must be verified");
+  if(signal?.aborted)throw Error('Desktop Native startup cancelled by shutdown');
   const port=await freePort();
+  if(signal?.aborted)throw Error('Desktop Native startup cancelled by shutdown');
   const installedNative=join(root,'tools','windows-emulator','desktop-native-server.mjs');
   // Only the installer/transaction verifier selects builtAssetsRoot. An
   // older installed fallback without the Native runner still uses Vite;
@@ -84,6 +87,7 @@ async function startHost({root,template=root,stateDirectory,userData,log,builtAs
     throw Error('Uncompiled Native fallback requires a verified offline Dev toolchain');
   const entry=staticHost?installedNative:
     join(root,'tools','windows-emulator','dev-supervisor.mjs');
+  if(signal?.aborted)throw Error('Desktop Native startup cancelled by shutdown');
   const child=fork(entry,[],{
     cwd:root,execPath:process.execPath,windowsHide:true,
     stdio:['ignore','pipe','pipe','ipc'],
@@ -114,6 +118,12 @@ async function startHost({root,template=root,stateDirectory,userData,log,builtAs
       ORDAX_EMULATOR_PORT:String(port),ORDAX_EMULATOR_STATE_DIR:stateDirectory,
       ORDAX_DESKTOP_ASSETS_ROOT:builtAssetsRoot??''},
   });
+  // Before ready, the async host has not yet been assigned to Electron's
+  // runtime owner. Stop its exact child synchronously if Electron quits now.
+  // The existing OS-owned process-tree policy remains the sole stop mechanism.
+  const cancelPending=()=>{stopHost(child,template);};
+  signal?.addEventListener('abort',cancelPending,{once:true});
+  if(signal?.aborted)cancelPending();
   const startedAt=Date.now();
   let runtimeReadyAt=null;
   child.stdout.on('data',b=>{
@@ -140,23 +150,34 @@ async function startHost({root,template=root,stateDirectory,userData,log,builtAs
   const processDeadline=startedAt+(staticHost?45000:120000);
   const absoluteDeadline=startedAt+(staticHost?60000:150000);
   let probes=0;
-  while(!hasHostExited(child) && launchError===null) {
-    const deadline=runtimeReadyAt===null
-      ? processDeadline
-      : Math.min(absoluteDeadline,Math.max(processDeadline,
-          runtimeReadyAt+(staticHost?10000:30000)));
-    if(Date.now()>=deadline)break;
-    probes++;
-    if(await isReady(port,staticHost?nativeSessionToken:null)){
-      log((staticHost?'Installed Native':'Vite fallback')+
-        ' http-ready after '+Math.round((Date.now()-startedAt)/1000)+'s; probes='+probes);
-      return {child,url:'http://127.0.0.1:'+port,template};
+  try {
+    while(!signal?.aborted && !hasHostExited(child) && launchError===null) {
+      const deadline=runtimeReadyAt===null
+        ? processDeadline
+        : Math.min(absoluteDeadline,Math.max(processDeadline,
+            runtimeReadyAt+(staticHost?10000:30000)));
+      if(Date.now()>=deadline)break;
+      probes++;
+      if(await isReady(port,staticHost?nativeSessionToken:null,signal)){
+        if(signal?.aborted)break;
+        log((staticHost?'Installed Native':'Vite fallback')+
+          ' http-ready after '+Math.round((Date.now()-startedAt)/1000)+'s; probes='+probes);
+        return {child,url:'http://127.0.0.1:'+port,template};
+      }
+      await new Promise(resolve=>setTimeout(resolve,350));
     }
-    await new Promise(resolve=>setTimeout(resolve,350));
+  } catch(error) {
+    stopHost(child,template);
+    throw error;
+  } finally {
+    signal?.removeEventListener('abort',cancelPending);
   }
+  const cancelled=signal?.aborted;
   const exited=hasHostExited(child);
   stopHost(child,template);
-  throw Error(launchError
+  throw Error(cancelled
+    ? 'Desktop Native startup cancelled by shutdown'
+    : launchError
     ? 'Canonical Native server could not start: '+(launchError.code||'SPAWN_ERROR')
     : exited
       ? 'Canonical Native server exited before HTTP readiness: '+
