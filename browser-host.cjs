@@ -370,8 +370,19 @@ function createDesktopBrowserHost({window, ipcMain, WebContentsView, session, di
       const stillCurrent=()=>!disposed && tabs.get(tabId)===view &&
         !wc.isDestroyed() && pageEpochs.get(wc)===epoch &&
         safeWebUrl(wc.getURL())===url;
-      void wc.executeJavaScript('String(window.getSelection()?.toString()||"").slice(0,4097)',true)
-        .then(text=>{
+      let selectionRequest;
+      try {
+        selectionRequest=wc.executeJavaScript(
+          'String(window.getSelection()?.toString()||"").slice(0,4097)',true);
+      } catch(error) {
+        // Chromium can throw before returning a Promise while its renderer
+        // is being torn down. Treat this exactly like an async rejection.
+        log('Browser selection unavailable: '+String(error?.message??error));
+        if(stillCurrent())send({type:'page-selection.result',tabId,
+          requestId:command.requestId,error:'selection-unavailable'});
+        return;
+      }
+      void Promise.resolve(selectionRequest).then(text=>{
           if(!stillCurrent())return;
           const selection=String(text).trim();
           if(!selection)throw Error('empty-selection');
@@ -385,7 +396,8 @@ function createDesktopBrowserHost({window, ipcMain, WebContentsView, session, di
     if(type==='page-find.finish'){
       findQueries.delete(tabId);
       clearFindRequest(tabId);
-      wc.stopFindInPage('clearSelection');
+      try {wc.stopFindInPage('clearSelection');}
+      catch(error){log('Browser find finish failed: '+String(error?.message??error));}
       return;
     }
     if(type.startsWith('page-find.')){
