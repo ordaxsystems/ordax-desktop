@@ -6,7 +6,7 @@ const {createHash}=require('node:crypto');
 const {spawnSync}=require('node:child_process');
 const {
   parseArchive,fileBytes,inspectInstalledShell,recoverInterrupted,
-  validatedRecovery,digest,decodeJson,
+  validatedRecovery,digest,decodeJson,readVerifiedGitBlobs,
 }=require('./dev-shell-delta.cjs');
 const sum=bytes=>createHash('sha256').update(bytes).digest('hex');
 const NAME='ordax-os-desktop-dev',VERSION='0.1.0-alpha.21';
@@ -159,4 +159,65 @@ test('legacy ASAR install flag refuses mutation on every platform',()=>{
 test('receipt JSON BOM is accepted without ignoring malformed data',()=>{
   assert.deepEqual(decodeJson('\uFEFF{"schema":"test"}'),{schema:'test'});
   assert.throws(()=>decodeJson('{malformed'),SyntaxError);
+});
+
+test('Git batch reads exact commit-path blobs and retains independent object identity',t=>{
+  const root=fs.mkdtempSync(path.join(os.tmpdir(),'ordax-git-source-batch-'));
+  t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
+  const run=(args)=>{
+    const result=spawnSync('git',['-C',root,...args],{encoding:'utf8'});
+    assert.equal(result.status,0,result.stderr);
+    return result.stdout.trim();
+  };
+  run(['init','-q','--object-format=sha1']);
+  const inputs={'main.cjs':Buffer.from('module.exports="main";\n'),
+    'window-layout.cjs':Buffer.from('module.exports={};\n')};
+  for(const [name,bytes] of Object.entries(inputs))
+    fs.writeFileSync(path.join(root,name),bytes);
+  run(['add','--','main.cjs','window-layout.cjs']);
+  run(['-c','user.name=Local Test','-c','user.email=local@test.invalid',
+    'commit','-qm','isolated git proof']);
+  const sha=run(['rev-parse','HEAD']);
+  const result=readVerifiedGitBlobs(root,sha,Object.keys(inputs));
+  assert.deepEqual(result,inputs);
+});
+
+test('Git batch rejects a forged blob object SHA despite well-formed headers',()=>{
+  const bytes=Buffer.from('exports.answer=42;\n');
+  const forged='f'.repeat(40);
+  const raw=Buffer.concat([Buffer.from(forged+' blob '+bytes.length+'\n'),
+    bytes,Buffer.from('\n')]);
+  assert.throws(()=>readVerifiedGitBlobs('/isolated','a'.repeat(40),
+    ['main.cjs'],{run:()=>({status:0,signal:null,stdout:raw})}),
+    /Git blob identity mismatch/);
+});
+
+test('Git batch refuses truncation, trailing bytes, unexpected object kinds and oversized blobs',()=>{
+  const bytes=Buffer.from('module.exports=true;\n');
+  const sha=createHash('sha1').update('blob '+bytes.length+'\0')
+    .update(bytes).digest('hex');
+  const good=Buffer.concat([Buffer.from(sha+' blob '+bytes.length+'\n'),
+    bytes,Buffer.from('\n')]);
+  const verify=stream=>readVerifiedGitBlobs('/isolated','a'.repeat(40),
+    ['main.cjs'],{run:()=>({status:0,signal:null,stdout:stream})});
+  assert.deepEqual(verify(good),{'main.cjs':bytes});
+  assert.throws(()=>verify(good.subarray(0,good.length-1)),/Untrusted Git batch object size/);
+  assert.throws(()=>verify(Buffer.concat([good,Buffer.from('extra')])),
+    /Unexpected trailing Git batch source/);
+  assert.throws(()=>verify(Buffer.from(sha+' tree 3\naaa\n')),
+    /Missing Git blob source/);
+  assert.throws(()=>verify(Buffer.from(sha+' blob 3000000\n')),
+    /Untrusted Git batch object size/);
+});
+
+test('Git batch validates bounded manifest names before invoking Git and blocks failed subprocesses',()=>{
+  let calls=0;
+  const run=()=>{calls++;return {status:1,signal:null,stdout:Buffer.alloc(0)}};
+  const fail=names=>readVerifiedGitBlobs('/isolated','a'.repeat(40),names,{run});
+  assert.throws(()=>fail(['main.cjs','main.cjs']),/Invalid Git batch source inventory/);
+  assert.throws(()=>fail(['../os.cjs']),/Invalid Git batch source inventory/);
+  assert.throws(()=>fail(Array(31).fill('main.cjs')),/Invalid Git batch source inventory/);
+  assert.equal(calls,0);
+  assert.throws(()=>fail(['main.cjs']),/Trusted Git batch source unavailable/);
+  assert.equal(calls,1);
 });

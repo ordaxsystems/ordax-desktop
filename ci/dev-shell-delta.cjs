@@ -6,7 +6,7 @@
 const fs=require('node:fs');
 const path=require('node:path');
 const {createHash}=require('node:crypto');
-const {execFileSync}=require('node:child_process');
+const {execFileSync,spawnSync}=require('node:child_process');
 const REMOTE='https://github.com/ordaxsystems/ordax-desktop.git';
 const SHA=/^[0-9a-f]{40}$/;
 const MAX_HEADER=12*1024*1024,MAX_BLOB=2*1024*1024,MAX_ARCHIVE=250*1024*1024;
@@ -49,6 +49,46 @@ function git(repo,args,{encoding='utf8'}={}){
     encoding,timeout:25000,maxBuffer:4*1024*1024,windowsHide:true,
     env:{...process.env,GIT_TERMINAL_PROMPT:'0',GCM_INTERACTIVE:'Never'}});
 }
+// One bounded binary Git request replaces two process launches per source file.
+// Git resolves <commit>:<path>; each returned blob is independently SHA-1
+// rehashed before acceptance. Remote-main identity and clean-tree checks
+// remain separate mandatory gates; no cache or local manifest is trusted.
+function readVerifiedGitBlobs(repo,revision,names,{run=spawnSync}={}){
+  const valid=/^[a-z][a-z0-9-]{0,80}\.(?:cjs|mjs)$/;
+  assert(SHA.test(revision) && Array.isArray(names) &&
+    names.length>=1 && names.length<=30 &&
+    names.every(name=>typeof name==='string' && valid.test(name)) &&
+    new Set(names).size===names.length,
+    'Invalid Git batch source inventory');
+  const input=Buffer.from(names.map(name=>revision+':'+name).join('\n')+'\n','utf8');
+  const result=run('git',['-C',repo,'cat-file','--batch'],{
+    input,encoding:null,timeout:25000,maxBuffer:64*1024*1024,windowsHide:true,
+    env:{...process.env,GIT_TERMINAL_PROMPT:'0',GCM_INTERACTIVE:'Never'},
+  });
+  assert(!result.error && result.status===0 && !result.signal &&
+    Buffer.isBuffer(result.stdout),'Trusted Git batch source unavailable');
+  const stream=result.stdout;
+  let cursor=0;
+  const trusted={};
+  for(const name of names){
+    const end=stream.indexOf(0x0a,cursor);
+    assert(end>=cursor && end-cursor<=120,'Invalid Git batch object header: '+name);
+    const match=/^([0-9a-f]{40}) blob (0|[1-9][0-9]*)$/.exec(
+      stream.toString('ascii',cursor,end));
+    assert(match,'Missing Git blob source: '+name);
+    const size=Number(match[2]),start=end+1;
+    assert(Number.isSafeInteger(size)&&size>0&&size<=MAX_BLOB &&
+      start+size<stream.length && stream[start+size]===0x0a,
+      'Untrusted Git batch object size: '+name);
+    const bytes=stream.subarray(start,start+size);
+    const identity=createHash('sha1').update('blob '+size+'\0').update(bytes).digest('hex');
+    assert(identity===match[1],'Git blob identity mismatch: '+name);
+    trusted[name]=Buffer.from(bytes);
+    cursor=start+size+1;
+  }
+  assert(cursor===stream.length,'Unexpected trailing Git batch source bytes');
+  return trusted;
+}
 function officialSources(repo){
   const revision=git(repo,['rev-parse','HEAD']).trim();
   const branch=git(repo,['branch','--show-current']).trim();
@@ -63,14 +103,8 @@ function officialSources(repo){
   assert(Array.isArray(files)&&files.length>=10&&files.length<=30&&
     files.includes('main.cjs')&&files.includes('window-layout.cjs')&&
     new Set(files).size===files.length,'Invalid canonical Electron file manifest');
-  const trusted={};
-  for(const name of files){
-    const bytes=git(repo,['show',revision+':'+name],{encoding:'buffer'});
-    const blob=createHash('sha1').update('blob '+bytes.length+'\0').update(bytes).digest('hex');
-    assert(blob===git(repo,['rev-parse',revision+':'+name]).trim(),
-      'Git blob identity mismatch: '+name);
-    trusted[name]=bytes;
-  }
+  // A single Git batch is faster on Windows and preserves per-blob identity.
+  const trusted=readVerifiedGitBlobs(repo,revision,files);
   return {revision,manifest,files:trusted};
 }
 function locations({allowMissingLive=false}={}){
@@ -233,5 +267,5 @@ if(require.main===module)cli().catch(error=>{
 });
 module.exports={
   parseArchive,fileBytes,digest,decodeJson,inspectInstalledShell,
-  recoverInterrupted,validatedRecovery,officialSources,
+  recoverInterrupted,validatedRecovery,officialSources,readVerifiedGitBlobs,
 };
