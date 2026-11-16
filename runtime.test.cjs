@@ -75,7 +75,11 @@ test('installed Electron loads canonical Native composition only after attested 
   const host = readFileSync(join(__dirname,'host.cjs'),'utf8');
   assert.ok(main.includes("const PRODUCT='/system/composition/native/index.html'"));
   assert.ok(host.includes("path:attested?'/__ordax/desktop-host-ready':'/system/composition/native/index.html'"));
-  assert.ok(host.includes('if(await isReady(port,staticHost?nativeSessionToken:null))'));
+  assert.ok(host.includes('if(await isReady(port,staticHost?nativeSessionToken:null,signal))'));
+  assert.ok(host.includes("signal?.addEventListener('abort',cancelPending,{once:true})"),
+    'shutdown must own the Native child while startup is still awaiting readiness');
+  assert.ok(host.includes('if(signal?.aborted)break;'),
+    'late HTTP readiness must not revive a Native host after shutdown');
   assert.ok(host.includes('timingSafeEqual(expected,Buffer.from(proof,\'hex\'))'));
 });
 

@@ -165,7 +165,12 @@ test('Native Surface startup failure releases resources without losing unconfirm
   // The actual startup catch must route failures through this ownership policy.
   assert.match(source,/catch\(error\)\{\s*\/\/ Revoke navigation and privileged Internet commands[\s\S]*?bindNativeOrigin\(null\);\s*\/\/ A started host is not a healthy Surface;[\s\S]*?runtime=releaseFailedNativeStartup\(\{/,
     'revoke all Native/Internet grants before releasing the failed host');
-  assert.match(source,/browserHost=null;\s*disarmNativeHostExit=null;\s*log\('Startup failed:/);
+  assert.match(source,/browserHost=null;\s*disarmNativeHostExit=null;\s*if\(nativeBootAbort\.signal\.aborted\)return;[^\n]*\s*log\('Startup failed:/);
+  assert.match(source,/quitting=true;\s*nativeBootAbort\.abort\(\)/);
+  assert.equal((source.match(/signal:nativeBootAbort\.signal/g)||[]).length,2,
+    'both candidate and rollback host boots must share shutdown cancellation');
+  assert.match(source,/if\(nativeBootAbort\.signal\.aborted \|\| !selected\.trial\)throw error;/,
+    'a shutdown must not mark the trial as unhealthy');
 });
 
 test('cold Native HTTP probe waits for delayed but valid response rather than canceling after 1.2 seconds',async t=>{
@@ -180,6 +185,18 @@ test('cold Native HTTP probe waits for delayed but valid response rather than ca
   assert.equal(result,true);
   assert.ok(Date.now()-started>=1500);
 });
+test('Native HTTP readiness aborts a hanging loopback response on shutdown',async t=>{
+  const server=http.createServer(()=>{});
+  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+  t.after(()=>new Promise(resolve=>server.close(resolve)));
+  const controller=new AbortController();
+  const started=Date.now();
+  const pending=isReady(server.address().port,null,controller.signal);
+  setTimeout(()=>controller.abort(),80);
+  assert.equal(await pending,false,'a cancelled response must never attest Native readiness');
+  assert.ok(Date.now()-started<1200,'shutdown must not wait for the 8s HTTP probe deadline');
+});
+
 test('Native HTTP probe refuses an unbound local port without fabricating readiness',async()=>{
   const port=await freePort();
   assert.equal(await isReady(port),false);
@@ -233,6 +250,61 @@ test('signaled Native child fails startup immediately instead of waiting for rea
     displayToken:tokens[8],localAiToken:tokens[9],surfaceReportToken:tokens[10],
   }),/Canonical Native server exited before HTTP readiness: (SIGTERM|1|143)/);
   assert.ok(Date.now()-started<10000,'dead Native child must not burn 45-second startup deadline');
+});
+
+test('closing Electron during Native cold boot cancels its exact running child',async t=>{
+  const root=mkdtempSync(join(tmpdir(),'ordax-native-boot-cancel-'));
+  const marker=join(root,'native-child.pid');
+  const target=join(root,'tools','windows-emulator');
+  mkdirSync(target,{recursive:true});
+  writeFileSync(join(target,'desktop-native-server.mjs'),
+    'import {writeFileSync} from "node:fs";\n'+
+    'writeFileSync('+JSON.stringify(marker)+',String(process.pid));\n'+
+    'setInterval(()=>{},1000);\n');
+  let pid=null;
+  const controller=new AbortController();
+  t.after(()=>{
+    controller.abort();
+    if(pid){try{process.kill(pid,'SIGTERM');}catch{}}
+    rmSync(root,{recursive:true,force:true,maxRetries:5,retryDelay:100});
+  });
+  const tokens=['a','b','c','d','e','f','1','2','3','4','5'].map(x=>x.repeat(64));
+  const options={
+    root,template:root,stateDirectory:root,userData:root,log:()=>{},
+    builtAssetsRoot:root,signal:controller.signal,
+    fileToken:tokens[0],localSessionToken:tokens[1],
+    nativeSessionToken:tokens[2],diagnosticToken:tokens[3],
+    deviceProfileToken:tokens[4],stateToken:tokens[5],
+    networkToken:tokens[6],observationToken:tokens[7],
+    displayToken:tokens[8],localAiToken:tokens[9],surfaceReportToken:tokens[10],
+  };
+  const pending=startHost(options);
+  for(let i=0;i<60 && !pid;i++){
+    if(require('node:fs').existsSync(marker))pid=Number(readFileSync(marker,'utf8'));
+    if(!pid)await new Promise(resolve=>setTimeout(resolve,75));
+  }
+  assert.ok(Number.isInteger(pid)&&pid>0,'a real Native child must exist before cancellation');
+  controller.abort();
+  await assert.rejects(pending,/Desktop Native startup cancelled by shutdown/);
+  let alive=true;
+  for(let i=0;i<35;i++){
+    try{process.kill(pid,0);}catch{alive=false;break;}
+    await new Promise(resolve=>setTimeout(resolve,75));
+  }
+  assert.equal(alive,false,'aborted cold boot must not leave a Native process alive');
+});
+
+test('already-aborted Desktop startup cannot spawn a Native process',async()=>{
+  const controller=new AbortController();controller.abort();
+  const tokens=['a','b','c','d','e','f','1','2','3','4','5'].map(x=>x.repeat(64));
+  await assert.rejects(startHost({
+    root:'missing',template:'missing',stateDirectory:'missing',userData:'missing',
+    log:()=>{},signal:controller.signal,builtAssetsRoot:'missing',
+    fileToken:tokens[0],localSessionToken:tokens[1],nativeSessionToken:tokens[2],
+    diagnosticToken:tokens[3],deviceProfileToken:tokens[4],stateToken:tokens[5],
+    networkToken:tokens[6],observationToken:tokens[7],displayToken:tokens[8],
+    localAiToken:tokens[9],surfaceReportToken:tokens[10],
+  }),/Desktop Native startup cancelled by shutdown/);
 });
 
 test('Native Surface reporter requires its own valid per-launch grant before starting a child',async()=>{
