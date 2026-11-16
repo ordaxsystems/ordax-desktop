@@ -14,7 +14,7 @@ const { readDesktopWindowLayout,desktopMinimumWindowSize,
   createDesktopWindowLayoutPersistence } = require('./window-layout.cjs');
 const { verifyBundledNativeReceipt } = require('./native-build.cjs');
 const { isTrustedNativeRequest,isNativeStateRoute } = require('./native-grant-frame.cjs');
-let window=null, runtime=null, stream=null, browserHost=null, updateTimer=null, activationTimer=null, staging=false, idleActivation=null;
+let window=null, runtime=null, stream=null, browserHost=null, initialUpdateTimer=null, updateTimer=null, activationTimer=null, staging=false, idleActivation=null;
 let quitting=false,disarmNativeHostExit=null;
 // A normal close, a health recovery, and an update relaunch are distinct events.
 // Never infer a crash solely from the absence of a running Electron process.
@@ -497,7 +497,7 @@ async function assertDesktopInternetSmoke(browserWindow,host) {
 // transaction is the single Desktop Dev source materializer; this is only
 // the safe handoff to the already health-gated Electron boot supervisor.
 async function stageInBackground(userData,template) {
-  if(staging || !app.isPackaged) return;
+  if(quitting || staging || !app.isPackaged) return;
   staging=true;
   try {
     // Match ordax-main-watch: never acquire/activate a new main revision
@@ -508,7 +508,11 @@ async function stageInBackground(userData,template) {
     else if(!['current','pending','pinned','rejected'].includes(result.status))
       log('Desktop Dev update check: '+result.status);
   }catch(error){log('Desktop Dev update check blocked: '+error.message);}
-  finally{staging=false;void idleActivation?.();}
+  finally{
+    staging=false;
+    // Shutdown must not schedule a second activation while a Git check drains.
+    if(!quitting)void idleActivation?.();
+  }
 }
 // The Electron process owns this Native host. If it dies after readiness,
 // relaunch Electron ONCE so every Native token, HTTP route, Surface binding and
@@ -572,6 +576,7 @@ app.on('before-quit',()=>{
   quitting=true;
   disarmNativeHostExit?.();
   disarmNativeHostExit=null;
+  if(initialUpdateTimer){clearTimeout(initialUpdateTimer);initialUpdateTimer=null;}
   if(updateTimer){clearInterval(updateTimer);updateTimer=null;}
   if(activationTimer){clearInterval(activationTimer);activationTimer=null;}
   browserHost?.dispose();browserHost=null;
@@ -782,7 +787,7 @@ app.whenReady().then(async()=>{
     if(app.isPackaged) {
       idleActivation=createDesktopIdleActivation({
         userData,template,log,
-        isReady:()=>!devProfile && !staging && window && !window.isDestroyed() &&
+        isReady:()=>!quitting && !devProfile && !staging && window && !window.isDestroyed() &&
           runtime?.child && runtime.child.exitCode===null &&
           runtime.child.signalCode===null && browserHost &&
           !browserHost.hasActiveWork() &&
@@ -805,7 +810,11 @@ app.whenReady().then(async()=>{
         },
       });
       // Safe background discovery, never a startup dependency or live-tree merge.
-      setTimeout(()=>{void stageInBackground(userData,template);},5000);
+      initialUpdateTimer=setTimeout(()=>{
+        initialUpdateTimer=null;
+        if(!quitting)void stageInBackground(userData,template);
+      },5000);
+      initialUpdateTimer.unref?.();
       updateTimer=setInterval(()=>{void stageInBackground(userData,template);},60*1000);
       updateTimer.unref?.();
       // Discovery and activation are separate stages; a staged revision

@@ -54,6 +54,20 @@ function fixture(){
   return {window,ui,host,post,browserSession,ipcMain,dialog};
 }
 
+test('explicit browser teardown releases the owning window listener and session IPC',()=>{
+  const f=fixture();
+  assert.equal(f.window.listenerCount('closed'),1);
+  assert.equal(f.window.listenerCount('resize'),1);
+  assert.equal(f.ipcMain.listenerCount('ordax:desktop-browser:command'),1);
+  f.host.dispose();
+  assert.equal(f.window.listenerCount('closed'),0,
+    'failed Native startup must not retain a disposed browser through the live window');
+  assert.equal(f.window.listenerCount('resize'),0);
+  assert.equal(f.ipcMain.listenerCount('ordax:desktop-browser:command'),0);
+  assert.equal(f.browserSession.listenerCount('will-download'),0);
+  f.host.dispose(); // A duplicate teardown cannot remove another owner's listeners.
+});
+
 test('Browser URL validation rejects privileged schemes, credentials and oversized data',()=>{
   assert.equal(safeWebUrl('https://example.com/x'),'https://example.com/x');
   assert.equal(safeWebUrl('http://example.org/'),'http://example.org/');

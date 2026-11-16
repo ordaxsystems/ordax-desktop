@@ -428,6 +428,9 @@ function createDesktopBrowserHost({window, ipcMain, WebContentsView, session, di
   window.on('resize',onResize);
   const dispose=()=>{
     if(disposed)return;disposed=true;
+    // Startup failure can dispose this host while the error window stays open.
+    // Detach this one-shot hook now instead of retaining the browser closure.
+    window.removeListener('closed',dispose);
     ipcMain.removeListener(CMD,onMessage);
     window.removeListener('resize',onResize);
     browserSession.removeListener('will-download',onDownload);

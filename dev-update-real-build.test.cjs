@@ -8,6 +8,8 @@ const {spawnSync}=require('node:child_process');
 const {mkdtempSync,mkdirSync,writeFileSync,readFileSync,existsSync,rmSync}=require('node:fs');
 const {join,dirname}=require('node:path');
 const {tmpdir}=require('node:os');
+// Reuse the test-only checkout locator before loading the Native authority.
+require('./ci/resolve-test-os.cjs');
 const {OFFICIAL_REMOTE}=require('./runtime.cjs');
 const {git}=require('./checkout.cjs');
 const {withVerifiedSurface}=require('./surface-stage.cjs');

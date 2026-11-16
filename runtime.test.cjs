@@ -3,6 +3,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { readFileSync } = require('node:fs');
 const { join, resolve } = require('node:path');
+const canonicalOs=require('./ci/resolve-test-os.cjs');
 const {
   resolveTemplate, developmentOsRoot, defaultDevelopmentOsRoot,
   runtimeStateDirectory, OFFICIAL_REMOTE,
@@ -11,7 +12,7 @@ const { resolveInstalledGit } = require('./checkout.cjs');
 
 test('Dev and MVP share the single authoritative distribution contract', () => {
   const source = JSON.parse(readFileSync(join(
-    defaultDevelopmentOsRoot(__dirname),'docs/contracts/distribution-profiles.json'
+    canonicalOs,'docs/contracts/distribution-profiles.json'
   ),'utf8'));
   assert.equal(OFFICIAL_REMOTE,'https://github.com/'+source.source_authority.repository+'.git');
   assert.equal(source.source_authority.branch,'main');
@@ -25,13 +26,13 @@ test('Dev and MVP share the single authoritative distribution contract', () => {
 test('desktop source defaults to the canonical sibling OS checkout', () => {
   const sibling=resolve(__dirname,'..','ordax-os');
   assert.equal(defaultDevelopmentOsRoot(__dirname),sibling);
-  assert.equal(resolveTemplate(__dirname, 'ignored', false), sibling);
+  assert.equal(resolveTemplate(__dirname, 'ignored', false), canonicalOs);
   assert.equal(developmentOsRoot(__dirname,{}),sibling);
 });
 test('explicit detached OS checkout must be absolute and must not be a symlink', () => {
   const sibling=resolve(__dirname,'..','ordax-os');
   assert.throws(()=>developmentOsRoot(__dirname,{ORDAX_DESKTOP_OS_CHECKOUT:'../ordax-os'}),/absolute path/);
-  assert.equal(developmentOsRoot(__dirname,{ORDAX_DESKTOP_OS_CHECKOUT:sibling}),sibling);
+  assert.equal(developmentOsRoot(__dirname,{ORDAX_DESKTOP_OS_CHECKOUT:canonicalOs}),canonicalOs);
 });
 test('packaged Windows uses offline verified snapshot with isolated state', () => {
   const template = resolveTemplate('ignored','C:\\OrdaXResources',true);
@@ -79,7 +80,7 @@ test('installed Electron loads canonical Native composition only after attested 
 });
 
 test('Windows installer producer pins the exact OS and private Desktop Git commits', () => {
-  const workflow = readFileSync(join(defaultDevelopmentOsRoot(__dirname),'.github/workflows/windows-desktop-dev.yml'),'utf8').replace(/\r\n/g,'\n');
+  const workflow = readFileSync(join(canonicalOs,'.github/workflows/windows-desktop-dev.yml'),'utf8').replace(/\r\n/g,'\n');
   // The OS no longer owns an Electron source or event-triggered Windows producer.
   // It accepts only exact immutable OS and Desktop SHAs via workflow_call.
   assert.match(workflow, /\n  workflow_call:\n/);
@@ -93,7 +94,7 @@ test('Windows installer producer pins the exact OS and private Desktop Git commi
 });
 
 test('Desktop owner invokes the only canonical Windows installer producer', () => {
-  const workflow = readFileSync(join(defaultDevelopmentOsRoot(__dirname),'.github/workflows/windows-desktop-dev.yml'),'utf8').replace(/\r\n/g,'\n');
+  const workflow = readFileSync(join(canonicalOs,'.github/workflows/windows-desktop-dev.yml'),'utf8').replace(/\r\n/g,'\n');
   const events = workflow.replace(/\r\n/g,'\n').split('\npermissions:')[0];
   assert.match(events, /\n  workflow_call:\n/);
   assert.doesNotMatch(events, /\n  (?:workflow_dispatch|pull_request|push):\n/);
@@ -185,7 +186,7 @@ test('Windows package excludes Linux-only Alpine package declaration without dro
     '!surface/runtime/media_runtime_probe.py', '!surface/runtime/audio-session.sh',
     '!surface/runtime/physical_ata_probe.py', '!surface/runtime/physical_kernel_log_probe.py', '!surface/runtime/physical_performance_probe.py',
   ]);
-  const workflow = readFileSync(join(defaultDevelopmentOsRoot(__dirname), '.github/workflows/windows-desktop-dev.yml'), 'utf8').replace(/\r\n/g,'\n');
+  const workflow = readFileSync(join(canonicalOs, '.github/workflows/windows-desktop-dev.yml'), 'utf8').replace(/\r\n/g,'\n');
   assert.ok(workflow.includes('node out/ordax-desktop-source/package-inventory.cjs --compiled'));
   assert.ok(!workflow.includes('node tools/windows-desktop/package-inventory.cjs'));
   assert.ok(workflow.includes('Build unsigned Windows installer'));
