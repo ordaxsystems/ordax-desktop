@@ -5,24 +5,9 @@ const { spawnSync } = require('node:child_process');
 const { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync, readdirSync, statSync, symlinkSync, lstatSync } = require('node:fs');
 const { join } = require('node:path');
 const { tmpdir } = require('node:os');
-// Detached Desktop tests use the immutable OS distribution authority mounted
-// by CI; the repository itself must never ship a second authority contract.
-// Set this test-only development locator before runtime.cjs loads its policy.
-const osCheckout=join(__dirname,'.deps','ordax-os');
-const siblingOs=join(__dirname,'..','ordax-os');
-// The pinned OS reusable installer mounts the detached Desktop checkout at
-// <canonical ordax-os>/out/ordax-desktop-source. Reuse that OS tree rather than
-// materializing another authority or depending on a sibling repo's name.
-const detachedInstallerOs=join(__dirname,'..','..');
-const hasCanonicalContract=root=>typeof root==='string' &&
-  existsSync(join(root,'docs','contracts','distribution-profiles.json'));
-const canonicalOs=process.env.ORDAX_DESKTOP_OS_CHECKOUT || (
-  [osCheckout,siblingOs,detachedInstallerOs].find(hasCanonicalContract)
-);
-if(!hasCanonicalContract(canonicalOs))
-  throw Error('Desktop tests require the canonical ordax-os checkout through ORDAX_DESKTOP_OS_CHECKOUT, .deps/ordax-os, a sibling checkout, or the pinned installer parent');
+// Tests share one OS checkout locator; no second distribution authority.
+const canonicalOs=require('./ci/resolve-test-os.cjs');
 process.env.ORDAX_DESKTOP_LOCAL_DEV='1';
-process.env.ORDAX_DESKTOP_OS_CHECKOUT=canonicalOs;
 const { OFFICIAL_REMOTE } = require('./runtime.cjs');
 const { compiledBundleSha256 } = require('./native-build.cjs');
 const { git } = require('./checkout.cjs');
@@ -87,7 +72,10 @@ test('Electron connects ordax-pull staging to automatic, health-gated idle activ
   assert.match(source,/if\(shutdownReason==='unclassified'\) shutdownReason='application-quit';\s*log\('Desktop shutdown requested: '\+shutdownReason\)/);
   assert.match(source,/window\.on\('close',\(\)=>\{\s*if\(!quitting && shutdownReason==='unclassified'\) shutdownReason='window-close'/);
   assert.match(source,/app\.on\('window-all-closed',\(\)=>\{\s*if\(shutdownReason==='unclassified'\) shutdownReason='all-windows-closed'/);
-  assert.match(source,/isReady:\(\)=>!devProfile && !staging/);
+  assert.match(source,/isReady:\(\)=>!quitting && !devProfile && !staging/);
+  assert.match(source,/if\(quitting \|\| staging \|\| !app\.isPackaged\) return/);
+  assert.match(source,/if\(initialUpdateTimer\)\{clearTimeout\(initialUpdateTimer\);initialUpdateTimer=null;\}/);
+  assert.match(source,/if\(!quitting\)void idleActivation\?\.\(\)/);
   assert.match(source,/!browserHost\.hasActiveWork\(\)/);
   assert.match(source,/!window\.webContents\.isCurrentlyAudible\?\.\(\)/);
   assert.match(source,/runtime\.child\.signalCode===null/);
