@@ -568,6 +568,31 @@ function monitorNativeHost(child) {
     },
   });
 }
+// Shutdown is a single Electron-owned transaction. A throwing Chromium
+// teardown must never skip the exact Native child or leave update timers
+// running. Record only slow stages or failures to diagnose physical shutdown
+// delays without changing the OS-owned synchronous process-tree policy.
+function runDesktopShutdownStages(stages,report,{clock=()=>performance.now(),slowMs=500}={}) {
+  if(!Array.isArray(stages)||typeof report!=='function'||typeof clock!=='function')
+    throw new TypeError('Desktop shutdown requires owned stages and a clock');
+  const note=message=>{try{report(message);}catch{ /* stderr/log already unavailable */ }};
+  let allConfirmed=true;
+  for(const [name,release] of stages) {
+    const started=clock();
+    try {
+      if(release()===false) {
+        allConfirmed=false;
+        note('Desktop shutdown stage '+name+' not confirmed; retaining exact owner');
+      }
+    }catch(error){
+      allConfirmed=false;
+      note('Desktop shutdown stage '+name+' failed: '+String(error?.message??error));
+    }
+    const elapsed=Math.max(0,Math.round(clock()-started));
+    if(elapsed>=slowMs)note('Desktop shutdown stage '+name+' took '+elapsed+'ms');
+  }
+  return allConfirmed;
+}
 app.on('before-quit',()=>{
   if(quitting)return;
   // Menu Quit calls before-quit before the window close event. A normal
@@ -575,15 +600,25 @@ app.on('before-quit',()=>{
   if(shutdownReason==='unclassified') shutdownReason='application-quit';
   log('Desktop shutdown requested: '+shutdownReason);
   quitting=true;
-  nativeBootAbort.abort(); // Stop the Native child even before startHost assigns runtime.
-  disarmNativeHostExit?.();
-  disarmNativeHostExit=null;
-  if(initialUpdateTimer){clearTimeout(initialUpdateTimer);initialUpdateTimer=null;}
-  if(updateTimer){clearInterval(updateTimer);updateTimer=null;}
-  if(activationTimer){clearInterval(activationTimer);activationTimer=null;}
-  browserHost?.dispose();browserHost=null;
-  if(runtime?.child){stopHost(runtime.child,runtime.template);runtime=null;}
-  stream?.end();stream=null;
+  runDesktopShutdownStages([
+    ['abort-native-boot',()=>nativeBootAbort.abort()],
+    ['disarm-native-watch',()=>{
+      disarmNativeHostExit?.();disarmNativeHostExit=null;
+    }],
+    ['cancel-update-timers',()=>{
+      if(initialUpdateTimer){clearTimeout(initialUpdateTimer);initialUpdateTimer=null;}
+      if(updateTimer){clearInterval(updateTimer);updateTimer=null;}
+      if(activationTimer){clearInterval(activationTimer);activationTimer=null;}
+    }],
+    ['dispose-browser',()=>{browserHost?.dispose();browserHost=null;}],
+    ['stop-native',()=>{
+      if(!runtime?.child)return true;
+      const stopped=stopHost(runtime.child,runtime.template);
+      if(stopped)runtime=null;
+      return stopped;
+    }],
+    ['close-log',()=>{const previous=stream;stream=null;previous?.end();}],
+  ],log);
 });
 app.on('window-all-closed',()=>{
   if(shutdownReason==='unclassified') shutdownReason='all-windows-closed';

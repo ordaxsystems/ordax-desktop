@@ -166,7 +166,8 @@ test('Native Surface startup failure releases resources without losing unconfirm
   assert.match(source,/catch\(error\)\{\s*\/\/ Revoke navigation and privileged Internet commands[\s\S]*?bindNativeOrigin\(null\);\s*\/\/ A started host is not a healthy Surface;[\s\S]*?runtime=releaseFailedNativeStartup\(\{/,
     'revoke all Native/Internet grants before releasing the failed host');
   assert.match(source,/browserHost=null;\s*disarmNativeHostExit=null;\s*if\(nativeBootAbort\.signal\.aborted\)return;[^\n]*\s*log\('Startup failed:/);
-  assert.match(source,/quitting=true;\s*nativeBootAbort\.abort\(\)/);
+  assert.match(source,/quitting=true;\s*runDesktopShutdownStages\(\[/);
+  assert.match(source,/\['abort-native-boot',\(\)=>nativeBootAbort\.abort\(\)\]/);
   assert.equal((source.match(/signal:nativeBootAbort\.signal/g)||[]).length,2,
     'both candidate and rollback host boots must share shutdown cancellation');
   assert.match(source,/if\(nativeBootAbort\.signal\.aborted \|\| !selected\.trial\)throw error;/,
@@ -376,4 +377,49 @@ test('Desktop shutdown of an active child fails closed without OS process-tree p
   }};
   assert.equal(stopHost(child,'C:\\Windows\\missing-template'),false);
   assert.equal(signals,1);
+});
+
+test('Electron teardown still stops exact Native child when Chromium cleanup throws',()=>{
+  const source=readFileSync(join(__dirname,'main.cjs'),'utf8');
+  const begin=source.indexOf('function runDesktopShutdownStages(');
+  const end=source.indexOf("\napp.on('before-quit'",begin);
+  assert.ok(begin>0&&end>begin,'one Electron-owned shutdown sequence');
+  const release=runInNewContext('('+source.slice(begin,end).trim()+')');
+  const calls=[],messages=[];
+  const result=release([
+    ['abort-native-boot',()=>calls.push('abort')],
+    ['dispose-browser',()=>{calls.push('browser');throw Error('Chromium detach refused');}],
+    ['stop-native',()=>{calls.push('native');return false;}],
+    ['close-log',()=>calls.push('log')],
+  ],msg=>messages.push(msg),{clock:()=>0});
+  assert.equal(result,false);
+  assert.deepEqual(calls,['abort','browser','native','log'],
+    'one teardown error must never skip the Native owner or log closure');
+  assert.ok(messages.some(msg=>msg.includes('dispose-browser failed: Chromium detach refused')));
+  assert.ok(messages.some(msg=>msg.includes('stop-native not confirmed')));
+  assert.match(source,/\['dispose-browser',\(\)=>\{browserHost\?\.dispose\(\);browserHost=null;\}\]/);
+  assert.match(source,/\['stop-native',\(\)=>\{[\s\S]*?stopHost\(runtime\.child,runtime\.template\)/,
+    'shutdown retains the exact Native host PID and canonical OS stop policy');
+});
+
+test('Electron shutdown records the slow native stage and isolates a failed diagnostic logger',()=>{
+  const source=readFileSync(join(__dirname,'main.cjs'),'utf8');
+  const begin=source.indexOf('function runDesktopShutdownStages(');
+  const end=source.indexOf("\napp.on('before-quit'",begin);
+  const release=runInNewContext('('+source.slice(begin,end).trim()+')');
+  const stages=[],messages=[];
+  let tick=0;
+  const result=release([
+    ['native',()=>{stages.push('native');tick+=670;return true;}],
+    ['stream',()=>stages.push('stream')],
+  ],message=>messages.push(message),{clock:()=>tick,slowMs:500});
+  assert.equal(result,true);
+  assert.deepEqual(stages,['native','stream']);
+  assert.deepEqual(messages,['Desktop shutdown stage native took 670ms']);
+  assert.doesNotThrow(()=>release([
+    ['browser',()=>{throw Error('browser denied');}],
+    ['native',()=>stages.push('native-after-log-failure')],
+  ],()=>{throw Error('logger closed');},{clock:()=>0}));
+  assert.equal(stages.at(-1),'native-after-log-failure',
+    'logging failure cannot disable shutdown stage isolation');
 });
