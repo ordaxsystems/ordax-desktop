@@ -458,3 +458,21 @@ test('new NSIS smoke cannot accept the historical OS-owned Electron receipt',()=
   assert.doesNotMatch(source,/tools\/windows-desktop\/package\.json/,
     'canonical NSIS cannot accept OS-owned Electron source');
 });
+
+
+test('canonical offline NSIS stores only the GGUF model as an extra precompressed resource',()=>{
+  const pkg=JSON.parse(fs.readFileSync(join(__dirname,'package.json'),'utf8'));
+  const defaultExtensions=['.avi','.mov','.m4v','.mp4','.m4p','.qt',
+    '.mkv','.webm','.vmdk'];
+  assert.deepEqual(pkg.build.nsis.preCompressedFileExtensions,
+    [...defaultExtensions,'.gguf'],
+    'retain built-in electron-builder exclusions without expanding to other Native binaries');
+  assert.equal(pkg.build.nsis.include,'installer.nsh');
+  assert.equal(pkg.build.nsis.oneClick,false);
+  assert.equal(pkg.build.nsis.deleteAppDataOnUninstall,false);
+  assert.equal(pkg.build.extraResources.some(entry=>
+    entry.to==='runtime-template/local-ai-runtime'),true,
+    'offline GGUF must remain bundled under the canonical Native resource mapping');
+  assert.equal(pkg.build.asar,true,
+    'embedded Electron ASAR integrity remains enabled');
+});
