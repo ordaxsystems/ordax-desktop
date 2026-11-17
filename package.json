@@ -145,6 +145,10 @@
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "include": "installer.nsh",
+      "preCompressedFileExtensions": [
+        ".avi", ".mov", ".m4v", ".mp4", ".m4p", ".qt", ".mkv", ".webm", ".vmdk",
+        ".gguf"
+      ],
       "deleteAppDataOnUninstall": false,
       "selectPerMachineByDefault": false
     },
