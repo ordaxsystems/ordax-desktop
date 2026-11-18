@@ -826,7 +826,12 @@ app.whenReady().then(async()=>{
       log('Desktop Dev candidate health failed; reverting to known-good: '+error.message);
       bindNativeOrigin(null);
       rejectCandidate(userData,selected.sha);
-      if(runtime?.child)stopHost(runtime.child,runtime.template);
+      // Do not discard the prior Native owner or start a rollback host until
+      // its exact Windows process tree (including the Product child) is gone.
+      // Outer startup cleanup retains this handle and blocks remote grants
+      // when the canonical OS-owned stop policy cannot confirm termination.
+      if(runtime?.child && !stopHost(runtime.child,runtime.template))
+        throw Error('Native rollback blocked: previous owned process tree not stopped');
       runtime=null;
       const fallback=await chooseBootVersion({userData,template,log});
       root=fallback.root;

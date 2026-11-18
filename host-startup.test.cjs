@@ -172,6 +172,9 @@ test('Native Surface startup failure releases resources without losing unconfirm
     'both candidate and rollback host boots must share shutdown cancellation');
   assert.match(source,/if\(nativeBootAbort\.signal\.aborted \|\| !selected\.trial\)throw error;/,
     'a shutdown must not mark the trial as unhealthy');
+  assert.match(source,
+    /rejectCandidate\(userData,selected\.sha\);[\s\S]*?if\(runtime\?\.child && !stopHost\(runtime\.child,runtime\.template\)\)\s*throw Error\('Native rollback blocked: previous owned process tree not stopped'\);\s*runtime=null;\s*const fallback=await chooseBootVersion/,
+    'never start a rollback Native host while the rejected candidate tree is unconfirmed');
 });
 
 test('cold Native HTTP probe waits for delayed but valid response rather than canceling after 1.2 seconds',async t=>{
