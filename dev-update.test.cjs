@@ -495,6 +495,30 @@ test('active Git runtime survives CI-only main changes, but Native and contracts
   assert.equal(clones,1);
   assert.equal(builds,0);
 
+  // A Supabase Account/SQL update and public Site pin are external owners:
+  // no new Desktop Native bytes, even when combined in the same Git main.
+  const externalPaths=[
+    'docs/contracts/public-site-source.json',
+    'infra/supabase/functions/ordax-account-gateway/index.ts',
+    'infra/supabase/product/migrations/20261118163000_account_export_preferences_v1.sql',
+    'tools/account/prove_gateway_negative_boundary.mjs',
+  ];
+  for(const path of externalPaths){
+    const target=join(f.source,...path.split('/'));
+    mkdirSync(require('node:path').dirname(target),{recursive:true});
+    writeFileSync(target,'external owner update');
+  }
+  gitCli(['add','.'],f.source);gitCli(['commit','-qm','external cloud and public Site only'],f.source);
+  const externalSha=gitCli(['rev-parse','HEAD'],f.source);
+  const external=await stageMain({userData:f.userData,template:f.template,runGit,
+    buildCandidate:async()=>{builds++;throw Error('external owners must not compile Native');}});
+  assert.deepEqual(external,{status:'no-runtime-change',sha:externalSha});
+  assert.equal(readState(f.userData).activeSha,f.first);
+  assert.equal(readState(f.userData).nonRuntimeMainSha,externalSha);
+  assert.equal(readState(f.userData).pendingSha,null);
+  assert.equal(clones,2);
+  assert.equal(builds,0);
+
   const contract=join(f.source,'docs','contracts','update-policy.json');
   writeFileSync(contract,JSON.stringify({schema:'fixture/1',updatePolicy:'native-rebuild-required'}));
   gitCli(['add','.'],f.source);gitCli(['commit','-qm','shared Native contract changed'],f.source);
@@ -527,6 +551,7 @@ test('unknown paths and Native source changes cannot hide behind unrelated docum
   for(const path of ['system/composition/native/index.html',
                       'docs/evidence/runtime-proof.json',
                       'docs/contracts/update-policy.json',
+                      'infra/supabase/product/native-contract.json',
                       'tools/windows-emulator/dev-supervisor.mjs',
                       'new-owner/unknown.txt']) {
     const f=fixture(t);

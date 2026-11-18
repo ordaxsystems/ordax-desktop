@@ -298,6 +298,14 @@ function isNonRuntimeSourcePath(path) {
       path.includes('\\') || path.includes('..')) return false;
   if (path === 'README.md' || path === 'AGENTS.md' ||
       path === 'bootstrap/dev-base/ordax-pull') return true;
+  // These external owners never enter the Desktop Native compiler: Supabase
+  // gateway/database deployment and the public Site's CI-only source pin.
+  // The exact pin and bounded directories are explicit; all other infra and
+  // shared Native contracts remain fail-closed build inputs.
+  if (path === 'docs/contracts/public-site-source.json' ||
+      path.startsWith('infra/supabase/functions/') ||
+      path.startsWith('infra/supabase/product/migrations/') ||
+      path.startsWith('tools/account/')) return true;
   if (path.startsWith('docs/') &&
       !path.startsWith('docs/contracts/') &&
       !path.startsWith('docs/evidence/')) return true;
