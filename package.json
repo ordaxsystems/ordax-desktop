@@ -7,9 +7,9 @@
   "scripts": {
     "start": "electron .",
     "dev:local": "node local-dev.cjs",
-    "test": "node --test standalone-stage.test.cjs local-dev.test.cjs window-layout.test.cjs dev-update.test.cjs host-recovery.test.cjs host-startup.test.cjs native-grant-frame.test.cjs browser-host.test.cjs pe-dependency-audit.test.cjs materialize-local-ai.test.cjs",
+    "test": "node --test power-helper.test.cjs standalone-stage.test.cjs local-dev.test.cjs window-layout.test.cjs dev-update.test.cjs host-recovery.test.cjs host-startup.test.cjs native-grant-frame.test.cjs browser-host.test.cjs pe-dependency-audit.test.cjs materialize-local-ai.test.cjs",
     "dist:win": "electron-builder --win nsis --x64",
-    "test:portable": "node --test standalone-stage.test.cjs local-dev.test.cjs window-layout.test.cjs dev-update.test.cjs host-recovery.test.cjs host-startup.test.cjs native-grant-frame.test.cjs browser-host.test.cjs pe-dependency-audit.test.cjs materialize-local-ai.test.cjs"
+    "test:portable": "node --test power-helper.test.cjs standalone-stage.test.cjs local-dev.test.cjs window-layout.test.cjs dev-update.test.cjs host-recovery.test.cjs host-startup.test.cjs native-grant-frame.test.cjs browser-host.test.cjs pe-dependency-audit.test.cjs materialize-local-ai.test.cjs"
   },
   "devDependencies": {
     "electron": "^40.0.0",
@@ -35,6 +35,7 @@
       "browser-host.cjs",
       "browser-preload.cjs",
       "native-build.cjs",
+      "power-helper.cjs",
       "vite-native-build.mjs",
       "surface-stage.cjs",
       "toolchain-cache.cjs",
@@ -98,6 +99,10 @@
         "filter": [
           "**/*"
         ]
+      },
+      {
+        "from": "../../out/windows-desktop-power/ordax-win32-power.exe",
+        "to": "runtime-template/tools/windows-power/ordax-win32-power.exe"
       },
       {
         "from": "../../docs/contracts/surface-source.json",
