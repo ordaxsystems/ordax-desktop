@@ -49,6 +49,17 @@ dispensar o build Windows. Alterações em `system/`, contratos Native,
 Surface, bridge Web, emulador ou caminhos desconhecidos sempre seguem
 o ciclo normal de build, prova de saúde e rollback.
 
+Os únicos contratos e caminhos externos adicionais dispensados do build
+Windows são o pin de Site `docs/contracts/public-site-source.json`, as
+funções Supabase `infra/supabase/functions/`, as migrações da base
+`infra/supabase/product/migrations/` e as provas de gateway
+`tools/account/`. Nenhum deles entra no compilador
+Native do Desktop; os demais arquivos de `infra/` e `docs/contracts/`
+continuam exigindo build e prova de saúde. Um futuro consumidor Native deve
+alterar seu caminho `system/` correspondente e, portanto, voltar a acionar
+a atualização canônica. A classificação é uma allowlist explícita, nunca
+uma dispensa genérica de contratos.
+
 O campo `nonRuntimeMainSha` em
 `desktop-dev-update-state.json` memoriza a última revisão `main` já
 comprovada sem impacto para evitar clonar o mesmo commit a cada minuto.
