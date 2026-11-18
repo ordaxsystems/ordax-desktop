@@ -222,15 +222,21 @@ function stopHost(child,template=null) {
   // asynchronous taskkill outlived Electron and could strand the supervised
   // Product Runtime when the parent disappeared. Never scan by process name.
   if(!child?.pid || hasHostExited(child)) return true;
-  if(process.platform==='win32' && typeof template==='string') {
-    try {
-      const {stopOwnedWindowsProcessTree}=require(join(template,
-        'system','adapters','desktop','owned-process-tree.cjs'));
-      if(stopOwnedWindowsProcessTree(child.pid)) return true;
-    } catch { /* Older verified Native fallback may lack the policy. */ }
+  if(process.platform==='win32') {
+    if(typeof template==='string') {
+      try {
+        const {stopOwnedWindowsProcessTree}=require(join(template,
+          'system','adapters','desktop','owned-process-tree.cjs'));
+        if(stopOwnedWindowsProcessTree(child.pid)) return true;
+      } catch { /* No unverified or legacy process-tree authority. */ }
+    }
+    // Never kill only the Node Native host on Windows: it may own a
+    // PyInstaller bootloader and a separately running Product Runtime child.
+    // On policy failure retain the exact host PID for an owned retry; the
+    // Electron before-quit gate must refuse exit until the tree is stopped.
+    return false;
   }
-  // Fail closed: affect only the exact child PID rather than guessing its
-  // descendants. The caller's next Product enrollment must reattest identity.
+  // Non-Windows development hosts do not launch this Windows Product child.
   try { child.kill('SIGTERM'); } catch {}
   return false;
 }

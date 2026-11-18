@@ -16,6 +16,7 @@ const { verifyBundledNativeReceipt } = require('./native-build.cjs');
 const { isTrustedNativeRequest,isNativeStateRoute } = require('./native-grant-frame.cjs');
 let window=null, runtime=null, stream=null, browserHost=null, initialUpdateTimer=null, updateTimer=null, activationTimer=null, staging=false, idleActivation=null;
 let quitting=false,disarmNativeHostExit=null;
+let nativeShutdownRetryTimer=null,nativeShutdownRetryCount=0;
 const nativeBootAbort=new AbortController();
 // A normal close, a health recovery, and an update relaunch are distinct events.
 // Never infer a crash solely from the absence of a running Electron process.
@@ -593,13 +594,14 @@ function runDesktopShutdownStages(stages,report,{clock=()=>performance.now(),slo
   }
   return allConfirmed;
 }
-app.on('before-quit',()=>{
+app.on('before-quit',event=>{
   if(quitting)return;
   // Menu Quit calls before-quit before the window close event. A normal
   // explicit quit must never be logged as an unexplained termination.
   if(shutdownReason==='unclassified') shutdownReason='application-quit';
   log('Desktop shutdown requested: '+shutdownReason);
   quitting=true;
+  let nativeStopConfirmed=true;
   runDesktopShutdownStages([
     ['abort-native-boot',()=>nativeBootAbort.abort()],
     ['disarm-native-watch',()=>{
@@ -613,12 +615,37 @@ app.on('before-quit',()=>{
     ['dispose-browser',()=>{browserHost?.dispose();browserHost=null;}],
     ['stop-native',()=>{
       if(!runtime?.child)return true;
-      const stopped=stopHost(runtime.child,runtime.template);
-      if(stopped)runtime=null;
-      return stopped;
+      nativeStopConfirmed=stopHost(runtime.child,runtime.template);
+      if(nativeStopConfirmed)runtime=null;
+      return nativeStopConfirmed;
     }],
-    ['close-log',()=>{const previous=stream;stream=null;previous?.end();}],
+    ['close-log',()=>{
+      if(!nativeStopConfirmed)return;
+      const previous=stream;stream=null;previous?.end();
+    }],
   ],log);
+  if(!nativeStopConfirmed){
+    // An unverified Windows process-tree stop must NEVER make Electron exit:
+    // a live Native parent may still own a connected Product Python child.
+    event.preventDefault();
+    quitting=false;
+    log('Desktop exit deferred: owned Native process tree not stopped');
+    if(nativeShutdownRetryCount<2 && nativeShutdownRetryTimer===null){
+      nativeShutdownRetryCount++;
+      nativeShutdownRetryTimer=setTimeout(()=>{
+        nativeShutdownRetryTimer=null;
+        if(!quitting)app.quit();
+      },800);
+    }else if(nativeShutdownRetryCount>=2){
+      dialog.showErrorBox('OrdaX Desktop — encerramento bloqueado',
+        'Não foi possível confirmar o encerramento seguro do host Native. '+
+        'O Desktop foi mantido ativo para evitar um Runtime órfão. '+
+        'Verifique o diagnóstico antes de tentar encerrar novamente.');
+    }
+  }else if(nativeShutdownRetryTimer!==null){
+    clearTimeout(nativeShutdownRetryTimer);
+    nativeShutdownRetryTimer=null;
+  }
 });
 app.on('window-all-closed',()=>{
   if(shutdownReason==='unclassified') shutdownReason='all-windows-closed';
@@ -799,7 +826,12 @@ app.whenReady().then(async()=>{
       log('Desktop Dev candidate health failed; reverting to known-good: '+error.message);
       bindNativeOrigin(null);
       rejectCandidate(userData,selected.sha);
-      if(runtime?.child)stopHost(runtime.child,runtime.template);
+      // Do not discard the prior Native owner or start a rollback host until
+      // its exact Windows process tree (including the Product child) is gone.
+      // Outer startup cleanup retains this handle and blocks remote grants
+      // when the canonical OS-owned stop policy cannot confirm termination.
+      if(runtime?.child && !stopHost(runtime.child,runtime.template))
+        throw Error('Native rollback blocked: previous owned process tree not stopped');
       runtime=null;
       const fallback=await chooseBootVersion({userData,template,log});
       root=fallback.root;
