@@ -166,7 +166,7 @@ test('Native Surface startup failure releases resources without losing unconfirm
   assert.match(source,/catch\(error\)\{\s*\/\/ Revoke navigation and privileged Internet commands[\s\S]*?bindNativeOrigin\(null\);\s*\/\/ A started host is not a healthy Surface;[\s\S]*?runtime=releaseFailedNativeStartup\(\{/,
     'revoke all Native/Internet grants before releasing the failed host');
   assert.match(source,/browserHost=null;\s*disarmNativeHostExit=null;\s*if\(nativeBootAbort\.signal\.aborted\)return;[^\n]*\s*log\('Startup failed:/);
-  assert.match(source,/quitting=true;\s*runDesktopShutdownStages\(\[/);
+  assert.match(source,/quitting=true;\s*let nativeStopConfirmed=true;\s*runDesktopShutdownStages\(\[/);
   assert.match(source,/\['abort-native-boot',\(\)=>nativeBootAbort\.abort\(\)\]/);
   assert.equal((source.match(/signal:nativeBootAbort\.signal/g)||[]).length,2,
     'both candidate and rollback host boots must share shutdown cancellation');
@@ -256,6 +256,14 @@ test('signaled Native child fails startup immediately instead of waiting for rea
 test('closing Electron during Native cold boot cancels its exact running child',async t=>{
   const root=mkdtempSync(join(tmpdir(),'ordax-native-boot-cancel-'));
   const marker=join(root,'native-child.pid');
+  // This isolated fixture launches one plain Node process, not PyInstaller.
+  // Inject a test-only OS tree-stop adapter scoped to that exact process PID;
+  // production never substitutes this mock for the OS-owned implementation.
+  const adapter=join(root,'system','adapters','desktop');
+  mkdirSync(adapter,{recursive:true});
+  writeFileSync(join(adapter,'owned-process-tree.cjs'),
+    "module.exports.stopOwnedWindowsProcessTree=pid=>{"+
+    "try{process.kill(pid,'SIGTERM');return true}catch{return false}};\n");
   const target=join(root,'tools','windows-emulator');
   mkdirSync(target,{recursive:true});
   writeFileSync(join(target,'desktop-native-server.mjs'),
@@ -370,13 +378,64 @@ test('Desktop shutdown never acts on an already-exited Native PID',()=>{
   assert.equal(stopHost(exited,'C:\\Windows\\missing-template'),true);
 });
 
-test('Desktop shutdown of an active child fails closed without OS process-tree policy',()=>{
+test('Desktop shutdown retains the exact Native host when Windows tree policy is unavailable',()=>{
   let signals=0;
-  const child={pid:28736,exitCode:null,signalCode:null,kill:s=>{
-    assert.equal(s,'SIGTERM');signals++;
-  }};
+  const child={pid:28736,exitCode:null,signalCode:null,kill:()=>{signals++;}};
   assert.equal(stopHost(child,'C:\\Windows\\missing-template'),false);
-  assert.equal(signals,1);
+  assert.equal(signals,0,'no bootloader-only SIGTERM may orphan the Product child');
+});
+
+test('Electron refuses to exit with an unconfirmed Native process tree and retries the same owner',()=>{
+  const source=readFileSync(join(__dirname,'main.cjs'),'utf8');
+  const start=source.indexOf("app.on('before-quit',");
+  const end=source.indexOf("app.on('window-all-closed'",start);
+  const beginShutdown=source.indexOf('function runDesktopShutdownStages(');
+  assert.ok(beginShutdown>0 && start>beginShutdown && end>start);
+  const shutdown=runInNewContext('('+source.slice(beginShutdown,start).trim()+')');
+  for(const confirmed of [false,true]){
+    const events=[],messages=[],timers=[],dialogs=[];
+    let onBeforeQuit,logClosed=0,treeCalls=0;
+    const requestQuit=()=>onBeforeQuit({preventDefault:()=>events.push('prevented')});
+    const context={
+      app:{on:(event,cb)=>{if(event==='before-quit')onBeforeQuit=cb},
+        quit:requestQuit},
+      quitting:false,shutdownReason:'unclassified',
+      nativeShutdownRetryTimer:null,nativeShutdownRetryCount:0,
+      nativeBootAbort:{abort:()=>{}},disarmNativeHostExit:null,
+      initialUpdateTimer:null,updateTimer:null,activationTimer:null,
+      browserHost:null,
+      runtime:{child:{pid:28737},template:'verified'},
+      stream:{end:()=>{logClosed++;}},
+      stopHost:()=>{treeCalls++;return confirmed},
+      log:message=>messages.push(message),
+      setTimeout:(cb,delay)=>{assert.equal(delay,800);timers.push(cb);return {}},
+      clearTimeout:()=>{},
+      dialog:{showErrorBox:(title,body)=>dialogs.push({title,body})},
+      runDesktopShutdownStages:(stages,report)=>shutdown(stages,report,{clock:()=>0}),
+    };
+    runInNewContext(source.slice(start,end),context);
+    requestQuit();
+    assert.equal(treeCalls,1,'one exact Native owner stop attempt');
+    assert.deepEqual(events,confirmed?[]:['prevented']);
+    assert.equal(context.quitting,confirmed);
+    assert.equal(logClosed,confirmed?1:0);
+    if(!confirmed){
+      assert.notEqual(context.runtime,null,'unconfirmed child remains owned');
+      assert.ok(messages.some(m=>m.includes('exit deferred')));
+      assert.equal(timers.length,1);
+      timers.shift()();timers.shift()();
+      assert.equal(treeCalls,3,'two bounded retries use the same owner');
+      assert.equal(events.length,3,'all failed stops block Electron exit');
+      assert.equal(context.nativeShutdownRetryCount,2);
+      assert.equal(timers.length,0,'no infinite retry loop');
+      assert.equal(dialogs.length,1,'owner sees an explicit shutdown blocker');
+      assert.equal(logClosed,0);
+    }else{
+      assert.equal(context.runtime,null);
+      assert.equal(timers.length,0);
+      assert.equal(dialogs.length,0);
+    }
+  }
 });
 
 test('Electron teardown still stops exact Native child when Chromium cleanup throws',()=>{
