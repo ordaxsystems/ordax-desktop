@@ -322,11 +322,11 @@ function onlyNonRuntimeChanges(diff) {
   return paths.length <= 512 && paths.every(isNonRuntimeSourcePath);
 }
 
-// DEV-only idle thresholds reduce the wait for verified source updates without
-// interrupting active windows, audio, browser work, First Run or rollback.
-// These are host-owned application lifecycle timings; Stable/MVP never runs
-// this Git-main activation path.
-const DEV_IDLE_SECONDS=Object.freeze({hidden:30,background:60,foreground:180});
+// DEV-only activation after a staged, verified source candidate is ready.
+// Minimized windows need only one 5s poll; unfocused windows two polls.
+// Keep the focused-window inactivity gate and all active-work/First Run/
+// rollback checks unchanged. Stable/MVP never uses this Git-main path.
+const DEV_IDLE_SECONDS=Object.freeze({hidden:5,background:10,foreground:180});
 
 // Owner/Development Git-main (ordax-pull) can prepare a new Native tree
 // while the Windows app is running. Promotion still belongs exclusively to
