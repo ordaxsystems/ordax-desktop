@@ -93,16 +93,16 @@ test('Electron connects ordax-pull staging to automatic, health-gated idle activ
   assert.match(source,/createDesktopBrowserHost\(\{window,ipcMain,WebContentsView,session,dialog,log\}\)/);
 });
 
-test('minimized OrdaX updates after 30s of its OWN inattention despite Windows idle being zero',()=>{
+test('minimized OrdaX updates after 5s of its OWN inattention despite Windows idle being zero',()=>{
   let ms=1000;
   const tracker=createDesktopWindowIdleTracker({now:()=>ms});
   const state={pendingSha:'a'.repeat(40),attemptedSha:null,pinnedSha:null};
   const sample=()=>tracker.snapshot({windowVisible:true,windowFocused:false,
     windowMinimized:true,systemIdleSeconds:0});
   tracker.onBackground();
-  ms+=29000;
+  ms+=4000;
   const before=sample();
-  assert.deepEqual(before,{windowVisible:false,windowFocused:false,idleSeconds:29});
+  assert.deepEqual(before,{windowVisible:false,windowFocused:false,idleSeconds:4});
   assert.equal(shouldAutoActivate(state,before),false);
   ms+=1000;
   assert.equal(shouldAutoActivate(state,sample()),true);
@@ -113,10 +113,10 @@ test('background OrdaX measures its own focus loss without requiring global PC i
   const tracker=createDesktopWindowIdleTracker({now:()=>ms});
   const state={pendingSha:'a'.repeat(40),attemptedSha:null,pinnedSha:null};
   tracker.onBackground();
-  ms=59000;
+  ms=9000;
   assert.equal(shouldAutoActivate(state,tracker.snapshot({windowVisible:true,
     windowFocused:false,windowMinimized:false,systemIdleSeconds:0})),false);
-  ms=60000;
+  ms=10000;
   assert.equal(shouldAutoActivate(state,tracker.snapshot({windowVisible:true,
     windowFocused:false,windowMinimized:false,systemIdleSeconds:0})),true);
   tracker.onAttention(); // a user returned, so the timer must reset.
@@ -124,10 +124,10 @@ test('background OrdaX measures its own focus loss without requiring global PC i
     windowFocused:true,windowMinimized:false,systemIdleSeconds:0})),false);
   ms=350000;
   tracker.onBackground();
-  ms=409000; // focus loss must persist for the full 60-second DEV window
+  ms=359000; // focus loss must persist for the full 10-second DEV window
   assert.equal(shouldAutoActivate(state,tracker.snapshot({windowVisible:true,
     windowFocused:false,windowMinimized:false,systemIdleSeconds:0})),false);
-  ms=410000;
+  ms=360000;
   assert.equal(shouldAutoActivate(state,tracker.snapshot({windowVisible:true,
     windowFocused:false,windowMinimized:false,systemIdleSeconds:0})),true);
 });
@@ -266,10 +266,10 @@ test('ordax-pull Desktop activates only verified pending Git revisions during sa
   assert.equal(shouldAutoActivate(state,{...ui,idleSeconds:179}),false,
     'focused Desktop cannot be interrupted before actual system inactivity');
   assert.equal(shouldAutoActivate(state,{...ui,idleSeconds:180}),true);
-  assert.equal(shouldAutoActivate(state,{windowVisible:true,windowFocused:false,idleSeconds:59}),false);
-  assert.equal(shouldAutoActivate(state,{windowVisible:true,windowFocused:false,idleSeconds:60}),true);
-  assert.equal(shouldAutoActivate(state,{windowVisible:false,windowFocused:false,idleSeconds:29}),false);
-  assert.equal(shouldAutoActivate(state,{windowVisible:false,windowFocused:false,idleSeconds:30}),true);
+  assert.equal(shouldAutoActivate(state,{windowVisible:true,windowFocused:false,idleSeconds:9}),false);
+  assert.equal(shouldAutoActivate(state,{windowVisible:true,windowFocused:false,idleSeconds:10}),true);
+  assert.equal(shouldAutoActivate(state,{windowVisible:false,windowFocused:false,idleSeconds:4}),false);
+  assert.equal(shouldAutoActivate(state,{windowVisible:false,windowFocused:false,idleSeconds:5}),true);
   for(const invalid of [{...state,pendingSha:null},{...state,pendingSha:'bad'},
       {...state,attemptedSha:sha},{...state,pinnedSha:'b'.repeat(40)}]){
     assert.equal(shouldAutoActivate(invalid,{...ui,idleSeconds:9999}),false);
