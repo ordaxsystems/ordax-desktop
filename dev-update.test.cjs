@@ -792,6 +792,32 @@ test('diverged, dirty or untrusted versions cannot be activated',async t=>{
   assert.equal(readState(f.userData).rejectedSha,second);
 });
 
+test('DEV Native verification uses fast complete tracked and untracked gates on Windows',async t=>{
+  const source=readFileSync(join(__dirname,'dev-update.cjs'),'utf8');
+  assert.match(source,/\['-C',path,'status','--porcelain=v1','--untracked-files=no'\]/);
+  assert.match(source,/\['-C',path,'ls-files','--others','--exclude-standard','--directory'\]/);
+  const f=fixture(t);
+  const staged=await stageMain({userData:f.userData,template:f.template,
+    runGit:f.offlineGit,buildCandidate:f.offlineBuild});
+  assert.equal(staged.status,'staged');
+  assert.equal((await chooseBootVersion({userData:f.userData,template:f.template})).sha,f.first);
+  confirmHealthy(f.userData,f.first);
+  const root=versionRoot(f.userData,f.first);
+  // Build scratch files in ignored out/ cannot invalidate a verified source.
+  writeFileSync(join(root,'out','ignored-git-status-probe.tmp'),'ignored output');
+  assert.equal((await chooseBootVersion({userData:f.userData,template:f.template})).sha,f.first);
+  // Non-ignored files, including nested directories, remain a hard rejection.
+  const unexpected=join(root,'unexpected-source-directory');
+  mkdirSync(unexpected);
+  writeFileSync(join(unexpected,'file.txt'),'untracked source');
+  const fallback=await chooseBootVersion({userData:f.userData,template:f.template});
+  assert.equal(fallback.root,f.template);
+  assert.equal(fallback.sha,null);
+  assert.equal(readState(f.userData).activeSha,f.first,'do not erase active receipt');
+  rmSync(unexpected,{recursive:true,force:true});
+  assert.equal((await chooseBootVersion({userData:f.userData,template:f.template})).sha,f.first);
+});
+
 test('incompatible official main SHA does not leak candidates or clone indefinitely', async t=>{
   const f=fixture(t);
   const contract=join(f.source,'tools','windows-emulator','desktop-host-contract.json');
