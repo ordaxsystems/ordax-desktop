@@ -93,16 +93,16 @@ test('Electron connects ordax-pull staging to automatic, health-gated idle activ
   assert.match(source,/createDesktopBrowserHost\(\{window,ipcMain,WebContentsView,session,dialog,log\}\)/);
 });
 
-test('minimized OrdaX updates after 60s of its OWN inattention despite Windows idle being zero',()=>{
+test('minimized OrdaX updates after 30s of its OWN inattention despite Windows idle being zero',()=>{
   let ms=1000;
   const tracker=createDesktopWindowIdleTracker({now:()=>ms});
   const state={pendingSha:'a'.repeat(40),attemptedSha:null,pinnedSha:null};
   const sample=()=>tracker.snapshot({windowVisible:true,windowFocused:false,
     windowMinimized:true,systemIdleSeconds:0});
   tracker.onBackground();
-  ms+=59000;
+  ms+=29000;
   const before=sample();
-  assert.deepEqual(before,{windowVisible:false,windowFocused:false,idleSeconds:59});
+  assert.deepEqual(before,{windowVisible:false,windowFocused:false,idleSeconds:29});
   assert.equal(shouldAutoActivate(state,before),false);
   ms+=1000;
   assert.equal(shouldAutoActivate(state,sample()),true);
@@ -113,10 +113,10 @@ test('background OrdaX measures its own focus loss without requiring global PC i
   const tracker=createDesktopWindowIdleTracker({now:()=>ms});
   const state={pendingSha:'a'.repeat(40),attemptedSha:null,pinnedSha:null};
   tracker.onBackground();
-  ms=119000;
+  ms=59000;
   assert.equal(shouldAutoActivate(state,tracker.snapshot({windowVisible:true,
     windowFocused:false,windowMinimized:false,systemIdleSeconds:0})),false);
-  ms=120000;
+  ms=60000;
   assert.equal(shouldAutoActivate(state,tracker.snapshot({windowVisible:true,
     windowFocused:false,windowMinimized:false,systemIdleSeconds:0})),true);
   tracker.onAttention(); // a user returned, so the timer must reset.
@@ -139,8 +139,8 @@ test('focused OrdaX still requires REAL system idle; changing visibility never i
   assert.equal(shouldAutoActivate(state,focused(0)),false);
   ms=3_601_000; // elapsed wall-clock time alone never makes a focused UI idle.
   assert.equal(shouldAutoActivate(state,focused(0)),false);
-  assert.equal(shouldAutoActivate(state,focused(599)),false);
-  assert.equal(shouldAutoActivate(state,focused(600)),true);
+  assert.equal(shouldAutoActivate(state,focused(179)),false);
+  assert.equal(shouldAutoActivate(state,focused(180)),true);
   tracker.onBackground();
   ms+=1000;
   assert.equal(shouldAutoActivate(state,tracker.snapshot({
@@ -260,13 +260,13 @@ test('ordax-pull Desktop activates only verified pending Git revisions during sa
   const sha='a'.repeat(40);
   const state={pendingSha:sha,attemptedSha:null,pinnedSha:null};
   const ui={windowVisible:true,windowFocused:true};
-  assert.equal(shouldAutoActivate(state,{...ui,idleSeconds:599}),false,
-    'focused Desktop cannot be interrupted before prolonged inactivity');
-  assert.equal(shouldAutoActivate(state,{...ui,idleSeconds:600}),true);
-  assert.equal(shouldAutoActivate(state,{windowVisible:true,windowFocused:false,idleSeconds:119}),false);
-  assert.equal(shouldAutoActivate(state,{windowVisible:true,windowFocused:false,idleSeconds:120}),true);
-  assert.equal(shouldAutoActivate(state,{windowVisible:false,windowFocused:false,idleSeconds:59}),false);
-  assert.equal(shouldAutoActivate(state,{windowVisible:false,windowFocused:false,idleSeconds:60}),true);
+  assert.equal(shouldAutoActivate(state,{...ui,idleSeconds:179}),false,
+    'focused Desktop cannot be interrupted before actual system inactivity');
+  assert.equal(shouldAutoActivate(state,{...ui,idleSeconds:180}),true);
+  assert.equal(shouldAutoActivate(state,{windowVisible:true,windowFocused:false,idleSeconds:59}),false);
+  assert.equal(shouldAutoActivate(state,{windowVisible:true,windowFocused:false,idleSeconds:60}),true);
+  assert.equal(shouldAutoActivate(state,{windowVisible:false,windowFocused:false,idleSeconds:29}),false);
+  assert.equal(shouldAutoActivate(state,{windowVisible:false,windowFocused:false,idleSeconds:30}),true);
   for(const invalid of [{...state,pendingSha:null},{...state,pendingSha:'bad'},
       {...state,attemptedSha:sha},{...state,pinnedSha:'b'.repeat(40)}]){
     assert.equal(shouldAutoActivate(invalid,{...ui,idleSeconds:9999}),false);
