@@ -20,6 +20,7 @@ function fixture() {
         {from:'../windows-emulator',to:'runtime-template/tools/windows-emulator',filter:['**/*']},
         {from:'../../docs/contracts/surface-source.json',to:'runtime-template/docs/contracts/surface-source.json'},
         {from:'../../out/windows-desktop-native',to:'runtime-template/desktop-assets',filter:['**/*']},
+        {from:'../../out/windows-desktop-power/ordax-win32-power.exe',to:'runtime-template/tools/windows-power/ordax-win32-power.exe'},
       ],
       directories:{output:'../../out/windows-desktop-installer'},
       nsis:{include:'installer.nsh'},
@@ -38,6 +39,7 @@ function fixture() {
   put('tools/windows-emulator/native-host.mjs');
   put('docs/contracts/surface-source.json','{}');
   put('out/windows-desktop-native/source-provenance.json',JSON.stringify({schema:'ordax.desktop-native-bundle-provenance/1',os_sha:SHA,source_commit:'d'.repeat(40)}));
+  put('out/windows-desktop-power/ordax-win32-power.exe',Buffer.concat([Buffer.from('MZ'),Buffer.alloc(3582)]));
   return {root, shell, pkg:packageJson, put,
     out:join(root,'out','windows-desktop-standalone'),
     cleanup:()=>fs.rmSync(root,{recursive:true,force:true})};
@@ -85,6 +87,8 @@ test('stages a self-contained Desktop shell from verified OS resources without a
     assert.equal(content.os_sha,staged.os_sha);
     assert.ok(content.files.some(record=>record.path==='runtime-template/system/composition/native/index.html'));
     assert.ok(content.files.some(record=>record.path==='runtime-template/desktop-assets/source-provenance.json'));
+    assert.ok(content.files.some(record=>record.path==='runtime-template/tools/windows-power/ordax-win32-power.exe'));
+    assert.equal(fs.statSync(join(f.out,'runtime-template/tools/windows-power/ordax-win32-power.exe')).size,3584);
     assert.ok(!content.files.some(record=>record.path.endsWith('packages.txt')));
     assert.equal(fs.existsSync(join(f.out,'runtime-template/system/surface/runtime/packages.txt')),false);
     const pkg=JSON.parse(fs.readFileSync(join(f.out,'shell/package.json'),'utf8'));

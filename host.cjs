@@ -1,6 +1,6 @@
 'use strict';
 const { fork } = require('node:child_process');
-const { join } = require('node:path');
+const { join, isAbsolute } = require('node:path');
 const { existsSync } = require('node:fs');
 const net = require('node:net');
 const http = require('node:http');
@@ -49,7 +49,7 @@ function hasHostExited(child) {
   return child.exitCode!==null || child.signalCode!==null;
 }
 async function startHost({root,template=root,stateDirectory,userData,log,builtAssetsRoot=null,
-  fileToken,localSessionToken,nativeSessionToken,diagnosticToken,deviceProfileToken,stateToken,networkToken,observationToken,surfaceReportToken,displayToken,localAiToken,sourceSha="",signal=null}) {
+  fileToken,localSessionToken,nativeSessionToken,diagnosticToken,deviceProfileToken,stateToken,networkToken,observationToken,surfaceReportToken,displayToken,localAiToken,sourceSha="",powerHelperPath=null,signal=null}) {
   if(typeof fileToken!=="string" || !/^[0-9a-f]{64}$/.test(fileToken))
     throw TypeError("OrdaX Desktop Files require per-launch authorization");
   if(typeof localSessionToken!=="string" || !/^[0-9a-f]{64}$/.test(localSessionToken) ||
@@ -68,6 +68,9 @@ async function startHost({root,template=root,stateDirectory,userData,log,builtAs
     throw TypeError("Desktop Native sessions require independent per-launch tokens");
   if(sourceSha!=="" && !/^[0-9a-f]{40}$/.test(sourceSha))
     throw TypeError("Desktop diagnostic source SHA must be verified");
+  if(powerHelperPath!==null &&
+     (typeof powerHelperPath!=='string'||!isAbsolute(powerHelperPath)))
+    throw TypeError('Installed Native power helper must be an absolute attested Desktop resource');
   if(signal?.aborted)throw Error('Desktop Native startup cancelled by shutdown');
   const port=await freePort();
   if(signal?.aborted)throw Error('Desktop Native startup cancelled by shutdown');
@@ -93,6 +96,7 @@ async function startHost({root,template=root,stateDirectory,userData,log,builtAs
     stdio:['ignore','pipe','pipe','ipc'],
     env:{...process.env,ELECTRON_RUN_AS_NODE:'1',ORDAX_EMULATOR_NO_BROWSER:'1',
       ORDAX_DESKTOP_HOST:'1',
+      ORDAX_DESKTOP_POWER_HELPER:powerHelperPath??'',
       ORDAX_DESKTOP_UPDATE_USER_DATA:userData,
       ORDAX_DESKTOP_FILE_TOKEN:fileToken,
       ORDAX_DESKTOP_LOCAL_SESSION_TOKEN:localSessionToken,

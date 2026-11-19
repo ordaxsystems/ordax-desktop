@@ -13,6 +13,7 @@ const { readDesktopWindowLayout,desktopMinimumWindowSize,
   fitDesktopWindowPreference,
   createDesktopWindowLayoutPersistence } = require('./window-layout.cjs');
 const { verifyBundledNativeReceipt } = require('./native-build.cjs');
+const { resolveInstalledPowerHelper } = require('./power-helper.cjs');
 const { isTrustedNativeRequest,isNativeStateRoute } = require('./native-grant-frame.cjs');
 let window=null, runtime=null, stream=null, browserHost=null, initialUpdateTimer=null, updateTimer=null, activationTimer=null, staging=false, idleActivation=null;
 let quitting=false,disarmNativeHostExit=null;
@@ -786,6 +787,8 @@ app.whenReady().then(async()=>{
       throw Error('Canonical OrdaX runtime snapshot missing');
     // Packaged startup never waits for Git/network or mutates a running checkout.
     // A staged source gets one trial; a missing health receipt rolls it back.
+    const powerHelperPath=app.isPackaged
+      ? resolveInstalledPowerHelper(template) : null;
     const selected=app.isPackaged
       ? await chooseBootVersion({userData,template,log,
           allowPendingTrial:await desktopFirstRunComplete(userData,template)})
@@ -803,7 +806,8 @@ app.whenReady().then(async()=>{
     try {
       log(root===template?'Bundled OrdaX Surface':'Verified Git-managed OrdaX Surface');
       runtime=await startHost({root,template,stateDirectory:runtimeStateDirectory(userData),userData,log,fileToken,localSessionToken,nativeSessionToken,diagnosticToken,deviceProfileToken,stateToken,networkToken,observationToken,surfaceReportToken,displayToken,localAiToken,sourceSha:sourceOf(selected),
-         builtAssetsRoot:nativeBuiltAssetsFor(root,template),signal:nativeBootAbort.signal});
+         builtAssetsRoot:nativeBuiltAssetsFor(root,template),
+         powerHelperPath,signal:nativeBootAbort.signal});
       if(nativeBootAbort.signal.aborted)throw Error('Desktop Native startup cancelled by shutdown');
       bindNativeOrigin(runtime.url);
       authorizeDesktopFileRequests(window,runtime.url,fileToken,localSessionToken,nativeSessionToken,deviceProfileToken,stateToken,observationToken,localAiToken,surfaceReportToken);
@@ -836,7 +840,8 @@ app.whenReady().then(async()=>{
       const fallback=await chooseBootVersion({userData,template,log});
       root=fallback.root;
       runtime=await startHost({root,template,stateDirectory:runtimeStateDirectory(userData),userData,log,fileToken,localSessionToken,nativeSessionToken,diagnosticToken,deviceProfileToken,stateToken,networkToken,observationToken,surfaceReportToken,displayToken,localAiToken,sourceSha:sourceOf(fallback),
-         builtAssetsRoot:nativeBuiltAssetsFor(root,template),signal:nativeBootAbort.signal});
+         builtAssetsRoot:nativeBuiltAssetsFor(root,template),
+         powerHelperPath,signal:nativeBootAbort.signal});
        if(nativeBootAbort.signal.aborted)throw Error('Desktop Native startup cancelled by shutdown');
       bindNativeOrigin(runtime.url);
       authorizeDesktopFileRequests(window,runtime.url,fileToken,localSessionToken,nativeSessionToken,deviceProfileToken,stateToken,observationToken,localAiToken,surfaceReportToken);
