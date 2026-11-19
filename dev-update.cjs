@@ -204,8 +204,17 @@ async function verifiedVersion(userData, sha, template) {
   if (!await isTrusted(path) || !hasDesktopHostContract(path) || !hasNativeBundle(path)) return null;
   const head = await git(['-C',path,'rev-parse','HEAD'],path,10000);
   if (!head.ok || head.stdout !== sha) return null;
-  const clean = await git(['-C',path,'status','--porcelain=v1','--untracked-files=all'],path,10000);
-  if (!clean.ok || clean.stdout) return null;
+  // Windows sparse revisions contain a large ignored compiled Native bundle
+  // and a node_modules junction. A single full untracked-files=all status
+  // traverses those paths for >10s on the physical DEV host, incorrectly
+  // downgrading a clean, pinned active revision to the bundled fallback.
+  // Retain BOTH exact cleanliness gates while avoiding that expensive scan:
+  // tracked/index changes, then non-ignored untracked paths (directories
+  // folded into one marker; any marker is still a hard rejection).
+  const tracked = await git(['-C',path,'status','--porcelain=v1','--untracked-files=no'],path,10000);
+  if (!tracked.ok || tracked.stdout) return null;
+  const untracked = await git(['-C',path,'ls-files','--others','--exclude-standard','--directory'],path,10000);
+  if (!untracked.ok || untracked.stdout) return null;
   // A compiled verified version never needs Vite at boot. Resolve the
   // optional compiler cache only for a real build or legacy Vite fallback.
   return path;
