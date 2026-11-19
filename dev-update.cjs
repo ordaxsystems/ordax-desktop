@@ -322,6 +322,12 @@ function onlyNonRuntimeChanges(diff) {
   return paths.length <= 512 && paths.every(isNonRuntimeSourcePath);
 }
 
+// DEV-only idle thresholds reduce the wait for verified source updates without
+// interrupting active windows, audio, browser work, First Run or rollback.
+// These are host-owned application lifecycle timings; Stable/MVP never runs
+// this Git-main activation path.
+const DEV_IDLE_SECONDS=Object.freeze({hidden:30,background:60,foreground:180});
+
 // Owner/Development Git-main (ordax-pull) can prepare a new Native tree
 // while the Windows app is running. Promotion still belongs exclusively to
 // chooseBootVersion + confirmHealthy on the next Electron launch. Re-launch
@@ -331,9 +337,9 @@ function shouldAutoActivate(state,{idleSeconds,windowVisible,windowFocused}={}){
   if(!state || !SHA_RE.test(state.pendingSha??'') ||
      state.attemptedSha || state.pinnedSha ||
      !Number.isFinite(idleSeconds) || idleSeconds<0) return false;
-  if(windowVisible===false)return idleSeconds>=60;
-  if(windowFocused===false)return idleSeconds>=120;
-  return idleSeconds>=600;
+  if(windowVisible===false)return idleSeconds>=DEV_IDLE_SECONDS.hidden;
+  if(windowFocused===false)return idleSeconds>=DEV_IDLE_SECONDS.background;
+  return idleSeconds>=DEV_IDLE_SECONDS.foreground;
 }
 
 // Serialize the idle handoff in the existing Desktop Dev transaction owner.
