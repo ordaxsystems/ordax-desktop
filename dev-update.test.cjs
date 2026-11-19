@@ -124,9 +124,12 @@ test('background OrdaX measures its own focus loss without requiring global PC i
     windowFocused:true,windowMinimized:false,systemIdleSeconds:0})),false);
   ms=350000;
   tracker.onBackground();
-  ms=410000;
+  ms=409000; // focus loss must persist for the full 60-second DEV window
   assert.equal(shouldAutoActivate(state,tracker.snapshot({windowVisible:true,
     windowFocused:false,windowMinimized:false,systemIdleSeconds:0})),false);
+  ms=410000;
+  assert.equal(shouldAutoActivate(state,tracker.snapshot({windowVisible:true,
+    windowFocused:false,windowMinimized:false,systemIdleSeconds:0})),true);
 });
 
 test('focused OrdaX still requires REAL system idle; changing visibility never instantly relaunches',()=>{
